@@ -1,17 +1,21 @@
 #!/usr/bin/env node
-// postinstall: download the overplane binary for this platform from the
-// GitHub release matching package.json's version, verify its sha256 against
-// the release's checksums.txt, and extract it into ./dist/.
+// postinstall: download the bare overplane executable for this platform from
+// the GitHub release matching package.json's version, verify its sha256
+// against the release's checksums.txt, and place it in ./dist/.
+//
+// Self-contained: Node stdlib only, no archive extraction, no system tools.
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
+const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
-const { execFileSync } = require("child_process");
 
 const pkg = require("./package.json");
-const REPO = "overplane/overplane";
+const DEFAULT_BASE = `https://github.com/overplane/overplane/releases/download/v${pkg.version}`;
+// Test hook: point at any static server hosting the artifacts.
+const BASE = process.env.OVERPLANE_DOWNLOAD_BASE || DEFAULT_BASE;
 
 const OS_MAP = { linux: "linux", darwin: "darwin", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
@@ -22,8 +26,9 @@ function fail(msg) {
 }
 
 function get(url, redirects = 5) {
+  const proto = url.startsWith("http://") ? http : https;
   return new Promise((resolve, reject) => {
-    https
+    proto
       .get(url, { headers: { "user-agent": "overplane-npm-installer" } }, (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
           res.resume();
@@ -55,35 +60,26 @@ async function main() {
     fail(`unsupported platform: ${process.platform}/${process.arch}`);
   }
 
-  const ext = osName === "windows" ? "zip" : "tar.gz";
-  const archive = `overplane_${pkg.version}_${osName}_${archName}.${ext}`;
-  const base = `https://github.com/${REPO}/releases/download/v${pkg.version}`;
+  const ext = osName === "windows" ? ".exe" : "";
+  const asset = `overplane_${pkg.version}_${osName}_${archName}${ext}`;
 
-  const checksums = (await get(`${base}/checksums.txt`)).toString("utf8");
+  const checksums = (await get(`${BASE}/checksums.txt`)).toString("utf8");
   const entry = checksums
     .split("\n")
     .map((l) => l.trim().split(/\s+/))
-    .find((f) => f[1] === archive);
-  if (!entry) fail(`no entry for ${archive} in checksums.txt`);
+    .find((f) => f[1] === asset);
+  if (!entry) fail(`no entry for ${asset} in checksums.txt`);
 
-  const data = await get(`${base}/${archive}`);
+  const data = await get(`${BASE}/${asset}`);
   const digest = crypto.createHash("sha256").update(data).digest("hex");
   if (digest !== entry[0]) {
-    fail(`sha256 mismatch for ${archive}: expected ${entry[0]}, got ${digest}`);
+    fail(`sha256 mismatch for ${asset}: expected ${entry[0]}, got ${digest}`);
   }
 
   const distDir = path.join(__dirname, "dist");
   fs.mkdirSync(distDir, { recursive: true });
-  const archivePath = path.join(distDir, archive);
-  fs.writeFileSync(archivePath, data);
-
-  // bsdtar (shipped with Windows 10+) extracts zip as well as tar.gz
-  const binName = osName === "windows" ? "overplane.exe" : "overplane";
-  execFileSync("tar", ["-xf", archivePath, "-C", distDir, binName]);
-  fs.rmSync(archivePath);
-  if (osName !== "windows") {
-    fs.chmodSync(path.join(distDir, binName), 0o755);
-  }
+  const binPath = path.join(distDir, `overplane${ext}`);
+  fs.writeFileSync(binPath, data, { mode: 0o755 });
   console.log(`overplane ${pkg.version} installed (${osName}/${archName})`);
 }
 

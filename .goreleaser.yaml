@@ -26,16 +26,27 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 
+# Compress binaries in place before they are uploaded. UPX cannot safely
+# handle every target: packed darwin binaries are killed by Gatekeeper on
+# modern macOS, and windows/arm64 PE is unsupported — those ship unpacked.
+upx:
+  - enabled: true
+    goos: [linux]
+    goarch: [amd64, arm64]
+    compress: best
+    lzma: true
+  - enabled: true
+    goos: [windows]
+    goarch: [amd64]
+    compress: best
+    lzma: true
+
+# Attach the (upx-packed) executables directly to the release — no tarballs.
+# GoReleaser appends .exe for windows automatically.
 archives:
   - id: default
-    formats: ["tar.gz"]
+    formats: ["binary"]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats: ["zip"]
-    files:
-      - LICENSE
-      - README.md
 
 checksum:
   name_template: checksums.txt
@@ -76,6 +87,9 @@ release:
   prerelease: auto
   footer: |
     ---
+    Assets are bare executables (upx-packed where supported), not tarballs:
+    download the one for your platform, `chmod +x` it (unix), and run it.
+
     **Verify the artifacts**
 
     ```sh
