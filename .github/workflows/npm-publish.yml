@@ -1,0 +1,56 @@
+name: npm-publish
+
+# Publishes the "overplane" npm package once the GitHub release is published
+# (draft releases keep their assets private, so this must not run earlier).
+#
+# Auth is npm trusted publishing (OIDC) — no NPM_TOKEN secret. One-time setup:
+#   1. The very first version must be published manually (npm has no pending
+#      publishers): from npm/, set the version and run `npm publish`.
+#   2. On npmjs.com > overplane > Settings > Trusted Publisher: GitHub Actions,
+#      repository overplane/overplane, workflow "npm-publish.yml".
+# Trusted publishing requires npm >= 11.5.1, hence Node 24 below. Provenance
+# attestations are generated automatically (publishConfig.provenance).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published v* release tag (e.g. v0.0.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing (OIDC) + provenance
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Set package version from tag
+        working-directory: npm
+        run: npm version --no-git-tag-version "${TAG#v}"
+      - name: Smoke test (download, verify, and run the released binary)
+        working-directory: npm
+        run: |
+          node install.js
+          node bin/overplane.js version
+      - name: Publish
+        working-directory: npm
+        run: npm publish

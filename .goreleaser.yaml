@@ -1,0 +1,90 @@
+# GoReleaser configuration for the public overplane repo.
+# Runs from .github/workflows/release.yml on v* tag pushes (or manual dispatch).
+version: 2
+
+project_name: overplane
+
+before:
+  hooks:
+    - go mod download
+    - go mod verify
+
+builds:
+  - id: overplane
+    main: ./cmd/overplane
+    binary: overplane
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -buildid=
+      - -X github.com/overplane/overplane/internal/platform/version.Version={{ .Version }}
+      - -X github.com/overplane/overplane/internal/platform/version.Commit={{ .ShortCommit }}
+      - -X github.com/overplane/overplane/internal/platform/version.Date={{ .CommitDate }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: default
+    formats: ["tar.gz"]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: ["zip"]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Keyless (OIDC) signature of the checksum file via cosign; verifiable against
+# the GitHub Actions identity without any key material in the repo.
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    certificate: "${artifact}.pem"
+    output: true
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '(?i)^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '(?i)^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Synced imports
+      regexp: '^sync:.+$'
+      order: 2
+    - title: Other changes
+      order: 999
+
+release:
+  draft: true
+  prerelease: auto
+  footer: |
+    ---
+    **Verify the artifacts**
+
+    ```sh
+    sha256sum --ignore-missing -c checksums.txt
+
+    cosign verify-blob \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github.com/{{ .Env.GITHUB_REPOSITORY }}' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    ```

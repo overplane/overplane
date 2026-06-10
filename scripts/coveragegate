@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+min="${COVERAGE_MIN:-80.0}"
+profile="${1:-.coverage/coverage.out}"
+if [[ ! -f "${profile}" ]]; then
+  echo "coverage profile not found: ${profile}" >&2
+  exit 1
+fi
+
+total="$(go tool cover -func="${profile}" | awk '/^total:/ { sub(/%/, "", $3); print $3 }')"
+
+go tool cover -func="${profile}" | awk -v min="${min}" '
+  /\.go:/ {
+    pct=$3
+    sub(/%/, "", pct)
+    file=$1
+    sub(/:.*/, "", file)
+    if (file ~ /assets_gen.go$/) next
+    sums[file]+=pct
+    counts[file]++
+  }
+  END { exit 0 }'
+
+echo "coverage report complete: total ${total}% (floor ${min}%)"

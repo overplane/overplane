@@ -1,0 +1,45 @@
+{
+  "name": "overplane",
+  "author": {
+    "name": "Mayank Lahiri",
+    "email": "mlahiri@gmail.com",
+    "url": "https://www.lahiri.me/"
+  },
+  "version": "0.0.0-dev",
+  "description": "Overplane CLI - evolve verified software. Installs the native Go binary from GitHub releases.",
+  "license": "Apache-2.0",
+  "homepage": "https://www.overplane.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/overplane/overplane.git"
+  },
+  "bugs": {
+    "url": "https://github.com/overplane/overplane/issues"
+  },
+  "bin": {
+    "overplane": "bin/overplane.js"
+  },
+  "files": [
+    "bin/overplane.js",
+    "install.js"
+  ],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

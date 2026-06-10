@@ -1,0 +1,49 @@
+version: "2"
+linters:
+  disable:
+    - errcheck
+  enable:
+    - copyloopvar
+    - depguard
+    - dupl
+    - errorlint
+    - exhaustive
+    - funlen
+    - gocritic
+    - gocyclo
+    - gosec
+    - lll
+    - misspell
+    - nakedret
+    - nolintlint
+    - prealloc
+    - revive
+  settings:
+    gocyclo:
+      min-complexity: 10
+    lll:
+      line-length: 120
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          deny:
+            - pkg: ^log$
+              desc: use internal/platform/log instead
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    rules:
+      - linters: [revive]
+        text: "package-comments|exported"
+      - linters: [gosec]
+        text: "G(204|301|302|304|306|702|703)"
+      - linters: [gocyclo]
+        path: "_test\\.go"
+      - linters: [gocyclo]
+        text: "cyclomatic complexity .* of func.*(checkCommand|Dispatch|parseLine|writeValue|write|NormalizeYAML|configCommand|run)"
+      - linters: [funlen]
+        text: "Function '(run|write)' has too many statements"
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
