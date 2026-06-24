@@ -27,8 +27,18 @@ type contextKey struct{}
 
 var defaultLogger *slog.Logger
 
-func Configure(format, level string, w io.Writer, verbose bool) (*slog.Logger, error) {
-	l, err := New(format, level, w, verbose)
+// Option adjusts handler construction in New/Configure.
+type Option func(*handlerState)
+
+// WithoutTimestamps omits the timestamp from every record: pretty lines start
+// at the level token and JSON objects have no "time" key. Useful for
+// screencasts, golden tests, and other deterministic-output contexts.
+func WithoutTimestamps() Option {
+	return func(s *handlerState) { s.noTime = true }
+}
+
+func Configure(format, level string, w io.Writer, verbose bool, opts ...Option) (*slog.Logger, error) {
+	l, err := New(format, level, w, verbose, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +47,7 @@ func Configure(format, level string, w io.Writer, verbose bool) (*slog.Logger, e
 	return l, nil
 }
 
-func New(format, level string, w io.Writer, verbose bool) (*slog.Logger, error) {
+func New(format, level string, w io.Writer, verbose bool, opts ...Option) (*slog.Logger, error) {
 	if w == nil {
 		w = io.Discard
 	}
@@ -45,11 +55,15 @@ func New(format, level string, w io.Writer, verbose bool) (*slog.Logger, error) 
 	if err != nil {
 		return nil, err
 	}
+	state := handlerState{w: w, level: lv, verbose: verbose, mu: &sync.Mutex{}}
+	for _, opt := range opts {
+		opt(&state)
+	}
 	switch format {
 	case "", FormatPretty:
-		return slog.New(&prettyHandler{handlerState{w: w, level: lv, verbose: verbose, mu: &sync.Mutex{}}}), nil
+		return slog.New(&prettyHandler{state}), nil
 	case FormatJSON:
-		return slog.New(&jsonHandler{handlerState{w: w, level: lv, verbose: verbose, mu: &sync.Mutex{}}}), nil
+		return slog.New(&jsonHandler{state}), nil
 	default:
 		return nil, fmt.Errorf("invalid log format %q", format)
 	}
@@ -107,6 +121,7 @@ type handlerState struct {
 	w       io.Writer
 	level   slog.Level
 	verbose bool
+	noTime  bool
 	attrs   []slog.Attr
 	mu      *sync.Mutex
 }
@@ -122,7 +137,10 @@ func (h *prettyHandler) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	isDebug := r.Level <= slog.LevelDebug
-	ts := color.Sprint(7, r.Time.UTC().Format(time.RFC3339))
+	ts := ""
+	if !h.noTime {
+		ts = color.Sprint(7, r.Time.UTC().Format(time.RFC3339)) + " "
+	}
 	slot := levelSlot(r.Level)
 	level := color.Sprint(slot, fmt.Sprintf("%-5s", strings.ToUpper(r.Level.String())))
 	msg := r.Message
@@ -147,22 +165,33 @@ func (h *prettyHandler) Handle(_ context.Context, r slog.Record) error {
 		}
 		inline = append(inline, coloredKey(a.key)+"="+fmt.Sprint(a.val))
 	}
-	line := fmt.Sprintf("%s %s |%s| %s\n", ts, level, msg, strings.Join(inline, " "))
+	line := fmt.Sprintf("%s%s |%s| %s\n", ts, level, msg, strings.Join(inline, " "))
 	if _, err := io.WriteString(h.w, line); err != nil {
 		return err
 	}
-	if hint != "" {
-		_, err := io.WriteString(h.w, strings.Repeat(" ", 68)+color.Sprint(7, "↳ "+hint)+"\n")
-		return err
+	return h.writeHint(hint)
+}
+
+func (h *prettyHandler) writeHint(hint string) error {
+	if hint == "" {
+		return nil
 	}
-	return nil
+	indent := 68
+	if h.noTime {
+		// Rendered UTC RFC3339 stamps are 20 chars ("...Z") plus a space.
+		indent -= 21
+	}
+	_, err := io.WriteString(h.w, strings.Repeat(" ", indent)+color.Sprint(7, "↳ "+hint)+"\n")
+	return err
 }
 
 func (h *jsonHandler) Handle(_ context.Context, r slog.Record) error {
 	attrs := h.normalized(r)
 	obj := make(orderedObject, 0, 3+len(attrs))
+	if !h.noTime {
+		obj = append(obj, orderedPair{"time", r.Time.UTC().Format(time.RFC3339)})
+	}
 	obj = append(obj,
-		orderedPair{"time", r.Time.UTC().Format(time.RFC3339)},
 		orderedPair{"level", strings.ToUpper(r.Level.String())},
 		orderedPair{"message", r.Message},
 	)

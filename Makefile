@@ -10,7 +10,7 @@ export GOBIN := $(TMPBIN)
 export PATH := $(TMPBIN):$(PATH)
 export GOTOOLCHAIN := go1.26.4
 
-.PHONY: ci all gate-go-version gate-generate gate-fmt gate-vet gate-lint gate-test gate-integration gate-coverage build clean dist dev ci-rehearse
+.PHONY: ci all gate-go-version gate-generate gate-fmt gate-vet gate-lint gate-test gate-integration gate-coverage build clean dist dev ci-rehearse e2e
 
 all: ci
 
@@ -47,6 +47,11 @@ gate-integration:
 	@mkdir -p .coverage
 	go test -tags=integration -covermode=atomic -coverprofile=.coverage/integration.out ./...
 
+# Opt-in real-daemon tier (#0003 §9): builds the agent image with a real
+# docker/podman daemon. Excluded from ci; auto-skips when no daemon exists.
+e2e:
+	go test -tags=e2e -timeout 60m -v -run 'E2E$$' ./cmd/overplane/
+
 gate-coverage:
 	@mkdir -p .coverage
 	@if [[ -f .coverage/unit.out && -f .coverage/integration.out ]]; then \
@@ -58,6 +63,7 @@ gate-coverage:
 build:
 	@mkdir -p dist
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -buildvcs=false -o dist/$(BINARY) ./cmd/$(BINARY)
+	./scripts/upxpack.sh dist/$(BINARY)
 
 clean:
 	rm -rf dist .coverage .tmp
@@ -70,6 +76,7 @@ dist: clean ci
 	@for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
 	  os="$${target%/*}"; arch="$${target#*/}"; ext=""; [[ "$$os" == windows ]] && ext=".exe"; \
 	  GOOS="$$os" GOARCH="$$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -buildvcs=false -o "dist/$(BINARY)-$$os-$$arch$$ext" ./cmd/$(BINARY); \
+	  ./scripts/upxpack.sh --goos "$$os" --goarch "$$arch" "dist/$(BINARY)-$$os-$$arch$$ext"; \
 	done
 	(cd dist && sha256sum $(BINARY)-* > SHA256SUMS)
 

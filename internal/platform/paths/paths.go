@@ -16,16 +16,17 @@ const (
 // Paths holds every filesystem location that config-aware tools share. All
 // paths are absolute and derived from a single discovered repository root.
 type Paths struct {
-	Root            string
-	ConfigDir       string
-	ConfigDataDir   string
-	ConfigSchemaDir string
-	GlobalFile      string
-	ThemeFile       string
-	InfraFile       string
-	GlobalSchema    string
-	ThemeSchema     string
-	InfraSchema     string
+	Root              string
+	ConfigDir         string
+	ConfigDataDir     string
+	ConfigSchemaDir   string
+	GlobalFile        string
+	ThemeFile         string
+	InfraFile         string
+	GlobalSchema      string
+	ThemeSchema       string
+	InfraSchema       string
+	ScreencastsSchema string
 
 	AssetsDir      string
 	FontsDir       string
@@ -33,13 +34,15 @@ type Paths struct {
 	IconsDir       string
 	IdentitiesFile string
 
-	SiteDir        string
-	SiteSrc        string
-	GeneratedDir   string
-	GeneratedIcons string
-	PublicDir      string
-	PublicAssets   string
-	DistDir        string
+	SiteDir           string
+	SiteSrc           string
+	GeneratedDir      string
+	GeneratedIcons    string
+	PublicDir         string
+	PublicAssets      string
+	DistDir           string
+	ScreencastsFile   string
+	ScreencastsOutput string
 
 	InfraDir     string
 	InfraSrcDir  string
@@ -63,16 +66,17 @@ func Resolve(rootOrStart string) (*Paths, error) {
 	infraSrc := filepath.Join(root, "infra", "src")
 	infraDist := filepath.Join(root, "infra", "dist")
 	return &Paths{
-		Root:            root,
-		ConfigDir:       filepath.Join(root, "config"),
-		ConfigDataDir:   dataDir,
-		ConfigSchemaDir: schemaDir,
-		GlobalFile:      filepath.Join(dataDir, "global.yaml"),
-		ThemeFile:       filepath.Join(dataDir, "theme.yaml"),
-		InfraFile:       filepath.Join(dataDir, "infra.yaml"),
-		GlobalSchema:    filepath.Join(schemaDir, "global.schema.json"),
-		ThemeSchema:     filepath.Join(schemaDir, "theme.schema.json"),
-		InfraSchema:     filepath.Join(schemaDir, "infra.schema.json"),
+		Root:              root,
+		ConfigDir:         filepath.Join(root, "config"),
+		ConfigDataDir:     dataDir,
+		ConfigSchemaDir:   schemaDir,
+		GlobalFile:        filepath.Join(dataDir, "global.yaml"),
+		ThemeFile:         filepath.Join(dataDir, "theme.yaml"),
+		InfraFile:         filepath.Join(dataDir, "infra.yaml"),
+		GlobalSchema:      filepath.Join(schemaDir, "global.schema.json"),
+		ThemeSchema:       filepath.Join(schemaDir, "theme.schema.json"),
+		InfraSchema:       filepath.Join(schemaDir, "infra.schema.json"),
+		ScreencastsSchema: filepath.Join(schemaDir, "screencasts.schema.json"),
 
 		AssetsDir:      filepath.Join(root, "assets"),
 		FontsDir:       filepath.Join(root, "assets", "fonts"),
@@ -80,13 +84,15 @@ func Resolve(rootOrStart string) (*Paths, error) {
 		IconsDir:       filepath.Join(root, "assets", "icons"),
 		IdentitiesFile: filepath.Join(root, "assets", "design", "overplane-identities-50.html"),
 
-		SiteDir:        filepath.Join(root, "site"),
-		SiteSrc:        filepath.Join(root, "site", "src"),
-		GeneratedDir:   filepath.Join(root, "site", "src", "generated"),
-		GeneratedIcons: filepath.Join(root, "site", "src", "generated", "icons"),
-		PublicDir:      filepath.Join(root, "site", "public"),
-		PublicAssets:   filepath.Join(root, "site", "public", "assets"),
-		DistDir:        filepath.Join(root, "site", "dist"),
+		SiteDir:           filepath.Join(root, "site"),
+		SiteSrc:           filepath.Join(root, "site", "src"),
+		GeneratedDir:      filepath.Join(root, "site", "src", "generated"),
+		GeneratedIcons:    filepath.Join(root, "site", "src", "generated", "icons"),
+		PublicDir:         filepath.Join(root, "site", "public"),
+		PublicAssets:      filepath.Join(root, "site", "public", "assets"),
+		DistDir:           filepath.Join(root, "site", "dist"),
+		ScreencastsFile:   filepath.Join(root, "site", "utils", "screencasts", "screencasts.yaml"),
+		ScreencastsOutput: filepath.Join(root, "site", "utils", "screencasts", "output"),
 
 		InfraDir:     filepath.Join(root, "infra"),
 		InfraSrcDir:  infraSrc,

@@ -24,7 +24,11 @@ type Runner struct {
 	Tel *telemetry.Providers
 }
 
-type ConfiglessCommand interface {
+// ConfigOptionalCommand is a command that runs with or without a project
+// overplane.yaml. Commands that want the project config call project.Locate
+// and project.Load themselves; a future config-required interface would have
+// the dispatcher load and validate it before Run.
+type ConfigOptionalCommand interface {
 	Name() string
 	Usage() string
 	Run(ctx context.Context, args []string) error
@@ -63,7 +67,7 @@ func Dispatch(ctx context.Context, r *Runner, args []string) error {
 	}
 	ctx, span := telemetrySpan(ctx, r, "cli."+args[0])
 	defer span.End()
-	if c, ok := info.cmd.(ConfiglessCommand); ok {
+	if c, ok := info.cmd.(ConfigOptionalCommand); ok {
 		return c.Run(ctx, args[1:])
 	}
 	return InternalError(fmt.Errorf("command %q has invalid type", args[0]))
@@ -71,10 +75,14 @@ func Dispatch(ctx context.Context, r *Runner, args []string) error {
 
 func commandRegistry(r *Runner) map[string]commandInfo {
 	return map[string]commandInfo{
+		"init":    {name: "init", desc: "initialize an Overplane project", cmd: initCommand{r: r}},
+		"setup":   {name: "setup", desc: "validate project and build agent image", cmd: setupCommand{r: r}},
+		"shell":   {name: "shell", desc: "open ephemeral shell in agent image", cmd: shellCommand{r: r}},
 		"version": {name: "version", desc: "print version information", cmd: versionCommand{r: r}},
 		"check":   {name: "check", desc: "run local system checks", cmd: checkCommand{r: r}},
 		"config":  {name: "config", desc: "validate repo config", cmd: configCommand{r: r}},
-		"theme":   {name: "theme", desc: "preview terminal theme", cmd: themeCommand{r: r}},
+		"agent":   {name: "agent", desc: "manage the project's agent container", cmd: agentCommand{r: r}},
+		"theme":   {name: "theme", desc: "terminal theme and brand identity", cmd: themeCommand{r: r}},
 		"demo":    {name: "demo", desc: "run sample interactive TUI", cmd: demoCommand{r: r}},
 	}
 }
@@ -89,7 +97,7 @@ func printRootHelp(w io.Writer, registry map[string]commandInfo) {
 		Description: Description,
 		Version:     version.Version,
 		Runtime:     version.Runtime(),
-		Metadata:    "build date " + version.Date + " commit " + version.Commit,
+		Metadata:    "build date " + version.BuildDate() + " commit " + version.Commit + executableNote(),
 		Banner:      splashBytes(),
 		Fallback:    "Overplane / Apache-2.0",
 		Commands:    commands,
@@ -97,10 +105,25 @@ func printRootHelp(w io.Writer, registry map[string]commandInfo) {
 			{Name: "--log-format pretty|json", Description: "log format"},
 			{Name: "--log-level debug|info|warn|error", Description: "log level"},
 			{Name: "--log-file PATH", Description: "append logs to file"},
+			{Name: "--log-timestamps=false", Description: "omit log timestamps"},
 			{Name: "-v, --verbose", Description: "include provenance"},
 			{Name: "--version", Description: "print version"},
 		},
 	})
+}
+
+// executableNote reports the on-disk size of the running binary as a friendly
+// sentence; lookup failures simply omit the note.
+func executableNote() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	st, err := os.Stat(exe)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf(". I am a %.1f MB executable.", float64(st.Size())/1e6)
 }
 
 func splashBytes() []byte {
@@ -139,14 +162,18 @@ func usage(spec color.HelpSpec) string {
 }
 
 func wantsJSON(args []string) (bool, []string) {
+	return wantsFlag(args, "--json")
+}
+
+func wantsFlag(args []string, name string) (bool, []string) {
 	var out []string
-	json := false
+	found := false
 	for _, a := range args {
-		if a == "--json" {
-			json = true
+		if a == name {
+			found = true
 			continue
 		}
 		out = append(out, a)
 	}
-	return json, out
+	return found, out
 }

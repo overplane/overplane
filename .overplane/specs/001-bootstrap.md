@@ -6,7 +6,7 @@ description: Bootstrap a production-quality Go CLI scaffold with git-style subco
   checks, and strict quality gates.
 id: '#0001'
 parent: []
-status: active  # not deprecated
+status: active  # implemented; schema has no terminal state (see Appendix A item 15)
 tags:
   - bootstrap
   - cli
@@ -15,7 +15,6 @@ title: Go CLI bootstrap
 # --- advisory extensions (not part of the base schema) ---
 author: Mayank Lahiri
 created: '2026-06-09'
-target_dir: go-core
 spec_version: 1
 ---
 
@@ -26,6 +25,11 @@ should produce a complete, compiling, tested, lint-clean Go CLI scaffold in the
 target directory. The architecture is modeled on a proven production CLI
 (git-style subcommands, stdlib-first, themed terminal output, strict gates).
 Every requirement below is normative unless marked *advisory*.
+
+> **Status: implemented.** This document has been updated post-implementation
+> to describe the **as-built** state of **overplane** (this module). Deliberate deviations from
+> the original prompt are folded into the section bodies and summarized in
+> Appendix B. The original clarification answers remain in Appendix A.
 
 ---
 
@@ -45,7 +49,6 @@ params:
   module: github.com/overplane/overplane          # {{MODULE}} — Go module path (e.g. github.com/overplane/overplane-master)
   description: Evolve verified software.       # {{DESCRIPTION}} — one-line CLI description for help text
   env_prefix: OVERPLANE        # {{ENV_PREFIX}} — env var prefix, uppercase, no trailing underscore (e.g. OPL)
-  repo_root_rel: '..'        # {{REPO_ROOT_REL}} — path from the Go module dir to the repo root
   license: Apache-2.0        # {{LICENSE}} — SPDX license shown in banner/help
   api_keys:                  # {{API_KEYS}} — env var names of API keys probed by `check`
     - ANTHROPIC_API_KEY
@@ -58,7 +61,6 @@ params:
   coverage_min: 80.0         # {{COVERAGE_MIN}} — coverage floor percent (total/package/file)
   go_version: '1.26'         # {{GO_VERSION}} — pinned Go minor version (latest stable)
   palette: default           # {{PALETTE}} — `default` for the autumn palette in §4.2, or a list of 16 xterm-256 indices
-  target_dir: go-core        # {{TARGET_DIR}} — directory of the Go module within the repo
 ```
 
 Where a token appears inside a path, identifier, or code snippet (e.g.
@@ -72,7 +74,7 @@ are not spec tokens and must be left verbatim.
 ## 1. Goal and non-goals
 
 **Goal.** Generate the directory containing this spec's `.overplane/` folder
-(i.e. `{{TARGET_DIR}}`, per the frontmatter `target_dir`) as a single Go module that builds
+(the **overplane** module root) as a single Go module that builds
 one static CLI binary `{{BINARY}}`, with all the platform subsystems specified
 below, ready for feature commands to be added on top.
 
@@ -86,13 +88,14 @@ No web UI. The deliverable is a *scaffold of production quality*, not a demo.
 1. **Go {{GO_VERSION}}** (latest stable). `go.mod` declares `go {{GO_VERSION}}.0`
    and an explicit `toolchain` line for the newest patch release. A CI gate
    script fails the build if the local toolchain minor version differs.
-2. **Stdlib-first.** Allowed third-party dependencies, exhaustively:
-   - `github.com/santhosh-tekuri/jsonschema` (JSON Schema draft 2020-12; latest major)
+2. **Stdlib-first.** Allowed third-party dependencies, exhaustively (as-built
+   module paths in parentheses):
+   - `github.com/santhosh-tekuri/jsonschema/v6` (JSON Schema draft 2020-12)
    - `gopkg.in/yaml.v3` (YAML with `KnownFields`)
-   - `github.com/jedib0t/go-pretty` (tables only; latest major)
-   - bubbletea, bubbles, huh, lipgloss (TUI only; use the latest published
-     stable major — resolve the current canonical module paths, whether
-     `charm.land/...` or `github.com/charmbracelet/...`, at generation time)
+   - `github.com/jedib0t/go-pretty/v6` (tables only)
+   - `github.com/charmbracelet/{bubbletea,huh,lipgloss}` (TUI only).
+     `bubbles` ended up an **indirect** dependency only: the `tui/nav`
+     navigator is hand-rolled bubbletea (§11.4), not `bubbles/list`.
    - `golang.org/x/term` (TTY detection)
    - `go.opentelemetry.io/otel` + OTLP gRPC trace/metric exporters + sdk
    - `google.golang.org/grpc` + `go.opentelemetry.io/proto/otlp` (already
@@ -119,63 +122,69 @@ No web UI. The deliverable is a *scaffold of production quality*, not a demo.
 ## 3. Directory layout
 
 ```
-config/
-├── data/
-│   ├── global.yaml                   # project-global constants
-│   ├── theme.yaml                    # visual + terminal theme
-│   └── infra.yaml                    # infrastructure config
-└── schema/
-    ├── global.schema.json
-    ├── theme.schema.json
-    └── infra.schema.json
-go-core/                              # Go module root ({{MODULE}})
+./                                    # overplane module root ({{MODULE}})
 ├── cmd/{{BINARY}}/main.go            # thin entrypoint: flags, logging, telemetry, dispatch
-├── pkg/
-│   └── config/                       # shared config discovery, schema validation, typed loaders
 ├── internal/
 │   ├── cli/                          # command registry, dispatch, per-command handlers
-│   │   ├── cli.go                    # Dispatch, Runner, registry, root help, exit codes
+│   │   ├── cli.go                    # Dispatch, Runner, registry, root help wiring
+│   │   ├── errors.go                 # ExitError, ExitCode, per-code constructors
 │   │   ├── subcommands.go            # nested subcommand router + usage printers
+│   │   ├── version.go                # `version` command
 │   │   ├── check.go                  # system checks command
 │   │   ├── configcmd.go              # `config validate` command
 │   │   ├── themecmd.go               # `theme preview` command
 │   │   └── democmd.go                # example TUI command (`demo`)
 │   ├── platform/
-│   │   ├── color/                    # palette, ANSI, tables, themed help rendering
+│   │   ├── clihelp/                  # root-help renderer (banner/header/usage/commands/flags)
+│   │   ├── color/                    # palette, ANSI, tables, per-command help, theme resolution
 │   │   ├── log/                      # slog: pretty + JSON handlers
 │   │   ├── tui/                      # shared interactive shortcuts (huh wrappers)
-│   │   │   └── nav/                  # reusable list+detail bubbletea navigator
+│   │   │   └── nav/                  # hand-rolled list+detail bubbletea navigator
 │   │   ├── telemetry/                # OTEL providers (noop unless endpoint set)
+│   │   │   └── telemetrytest/        # in-process OTLP/gRPC collector for tests (§18)
 │   │   ├── env/                      # .env loader + normalization
+│   │   ├── paths/                    # repo-root discovery → absolute Paths set (§8)
+│   │   ├── configloader/             # generic schema-validated YAML loader (§8)
 │   │   ├── hashutil/                 # SHA-256 short-hash utilities (§6.5)
 │   │   ├── timeutil/                 # datetime utilities, injectable clock (§6.6)
 │   │   ├── version/                  # Version/Commit/Date vars set via -ldflags
 │   │   ├── serde/
 │   │   │   ├── jsonschema/           # schema compile + validate → []Problem
-│   │   │   ├── yamlstrict/           # two-phase strict YAML decode helpers
+│   │   │   ├── yamlstrict/           # strict YAML decode helpers
 │   │   │   ├── canonjson/            # stable JSON encoding, sorted keys (§6.3)
 │   │   │   └── yamlcanon/            # deterministic YAML emission (§6.4)
 │   │   └── embed/assets/             # generated gzip asset map + virtual fs.FS
 │   │       └── cmd/gen/main.go       # go:generate asset compiler
 ├── static/                           # embed source tree (input to the generator)
 │   └── files/
-│       └── misc/banner.ans           # ANSI splash banner (binary, pre-colored)
+│       └── misc/banner.ans           # ANSI splash banner (binary, pre-colored truecolor art)
+├── .github/workflows/                # CI for the mirrored public repo (post-bootstrap)
+│   ├── ci.yml                        # make ci on push/PR in the public repo
+│   ├── release.yml                   # goreleaser on v* tags
+│   └── npm-publish.yml               # npm package publish
+├── .goreleaser.yaml                  # release builds for the public repo (post-bootstrap)
+├── npm/                              # npm distribution wrapper (post-bootstrap)
 ├── cli.sh                            # build-if-stale wrapper (§13)
 ├── Makefile                          # quality gates (§14)
 ├── .golangci.yml                     # strict lint config (§14)
 ├── scripts/
 │   ├── checkgoversion                # Go toolchain gate
-│   └── coveragegate                  # per-file/per-package/total coverage gate
+│   └── coveragegate                  # coverage report (§14.3)
 ├── AGENTS.md                         # agent instructions (§15)
 ├── CONTRIBUTING.md                   # human conventions (condensed from §15)
+├── CLAUDE.md / .cursor/rules/agents.mdc  # one-liners pointing at AGENTS.md
+├── LICENSE                           # Apache-2.0
 ├── go.mod / go.sum
 └── VERSION                           # semver, single line
 ```
 
-**Note on config:** all project-wide static YAML lives under the repository-root
-`config/data/`, and all JSON Schema lives under `config/schema/`. The Go module
-does not keep a module-local `config/` directory; sitebuild, infrabuild, and the
-CLI all reuse `go-core/internal/platform` primitives with per-build config wrappers.
+**Note on config:** the module keeps no module-local `config/` directory and
+there is **no `pkg/config` package**: an *enclosing repository* (when overplane
+is vendored inside a larger tree) may provide shared static YAML under
+`config/data/` and JSON Schema under `config/schema/`; the CLI discovers such a
+root by upward walk (`internal/platform/paths`) and loads files through the
+generic schema-validated loader (`internal/platform/configloader`, §8). Nothing
+in overplane depends on any sibling directory beyond this optional discovery.
 
 ---
 
@@ -206,31 +215,36 @@ func RenderHelp(spec HelpSpec) string         // §9.3
 func ResetForTest()                           // clears cached state
 ```
 
-Default palette (used when `{{PALETTE}}` is `default` and no theme resolves) —
-a warm "autumn" set; the agent may choose 16 harmonious xterm-256 indices in
-the warm range (reds/oranges/golds/browns plus a dim gray and a near-white)
-and document each slot's role:
+Default palette (used when no theme resolves) — the built-in
+`overplane-autumn` set, `{214, 130, 166, 64, 67, 136, 95, 244, 180, 94, 101,
+172, 173, 58, 230, 238}`:
 
-| Slot | Role |
-|---|---|
-| 0 | titles, provenance (file/symbol) |
-| 1 | step identifiers |
-| 2 | warnings, examples |
-| 3 | success |
-| 4 | info level, flag names |
-| 5 | accents |
-| 6 | debug level |
-| 7 | dim/secondary text |
-| 8 | placeholders |
-| 9–15 | rotating slots for hashed key coloring (§5.2) |
+| Slot | xterm | Role |
+|---|---|---|
+| 0 | 214 | titles, provenance (file/symbol) |
+| 1 | 130 | step identifiers |
+| 2 | 166 | warnings, examples |
+| 3 | 64 | success |
+| 4 | 67 | info level, flag names |
+| 5 | 136 | accents |
+| 6 | 95 | debug |
+| 7 | 244 | dim/secondary text |
+| 8 | 180 | placeholders |
+| 9–13 | 94, 101, 172, 173, 58 | rotating slots for hashed key coloring (§5.2) |
+| 14 | 230 | near-white |
+| 15 | 238 | dark |
+
+(All 16 slots participate in FNV-1a hashed key coloring; 9–13 have no other
+dedicated role.)
 
 ### 4.3 Theme: `config/data/theme.yaml`
 
-Canonical theme file at the **repo root** `config/data/theme.yaml`, schema-validated
-against `config/schema/theme.schema.json` through the platform config loader (strict;
-`additionalProperties: false`).
-
-Schema (YAML form shown; encode as JSON Schema draft 2020-12):
+An enclosing repository may provide a theme file at `config/data/theme.yaml`
+(discovered by upward walk, §8.2). The file is a **shared project theme** and
+may carry additional sections for other consumers; the CLI is concerned only
+with its `terminal:` section. The file is schema-validated against the
+adjacent `config/schema/theme.schema.json` (strict;
+`additionalProperties: false` at every level). The `terminal:` shape:
 
 ```yaml
 terminal:
@@ -243,18 +257,22 @@ terminal:
     debug: int
 ```
 
-**Resolution order** (first hit wins), executed once at process start:
+**Resolution order** (first hit wins), implemented by `color.ResolveTheme` /
+`color.ApplyResolvedTheme` and executed once at process start:
 
 1. `{{ENV_PREFIX}}_THEME` env var → explicit path to a full theme YAML (error
    if invalid).
-2. Walk upward from CWD looking for `config/data/theme.yaml` (repo-root discovery,
-   same upward-walk used for app config discovery, §8.2).
-3. Built-in terminal palette fallback if no repository config can be discovered.
+2. Walk upward from CWD looking for `config/data/theme.yaml` (repo-root
+   discovery, same upward-walk used elsewhere, §8.2).
+3. Built-in `overplane-autumn` palette fallback if no repository config can be
+   discovered.
 
 A discovered theme that fails schema validation falls back to the built-in
-terminal palette. An explicit `{{ENV_PREFIX}}_THEME` error fails resolution.
-After resolution, `color.Set` is called with the palette and the log package
-picks up level-slot overrides.
+terminal palette (and `main` logs a warning). An explicit `{{ENV_PREFIX}}_THEME`
+error fails resolution. After resolution, `color.Set` is called with the
+palette. **As-built note:** the `terminal.log` slot overrides are parsed and
+schema-validated but are **not yet wired into the log package** — log level
+slots are currently fixed (§5.2).
 
 ### 4.4 Enable/disable
 
@@ -308,8 +326,9 @@ Line format (single line + optional hint line):
 ```
 
 - **Timestamp**: RFC3339 UTC, rendered dim.
-- **Level**: uppercase, colored via theme slots — error→slot 0 (or theme
-  `log.error`), warn→2, info→4, debug→6.
+- **Level**: uppercase, colored via fixed palette slots — as-built mapping:
+  error→slot 2, warn→slot 0, info→slot 4, debug→slot 7. (Theme `log.*` slot
+  overrides are schema-accepted but not yet applied, §4.3.)
 - **Message**: padded to 45 chars inside `|…|` for info/warn/error; debug lines
   use plain unpadded `key=value` form with no color.
 - **Attributes**: `key=value`; the key's color slot is chosen by FNV-1a hash of
@@ -380,16 +399,18 @@ func Validate(schemaName string, schemaDoc, instance any) ([]Problem, error)
 Every YAML file the app reads (app config, theme) is validated in two layers:
 
 1. Decode YAML → `map[string]any` (normalize `map[any]any` keys to strings,
-   recursively), validate against the embedded JSON Schema. **All object levels
-   in every schema set `"additionalProperties": false`.**
-2. Re-decode into the typed Go struct using `yaml.Decoder` with
-   `KnownFields(true)` so unknown YAML keys are rejected even if a schema is
-   loosened later.
-3. Optional third pass: semantic validation in Go (cross-field rules) returning
-   `[]Problem` with pointers.
+   recursively), validate against the JSON Schema. **All object levels in
+   every schema set `"additionalProperties": false`.**
+2. Decode into the typed Go struct. As-built, `configloader.Load[T]` does this
+   by round-tripping the schema-validated instance through `encoding/json`
+   (schema strictness already rejects unknown keys); `yamlstrict.DecodeStrict`
+   (`yaml.Decoder` with `KnownFields(true)`) remains available for direct
+   strict decoding.
+3. Optional third pass: semantic validation in Go (cross-field rules), e.g.
+   `color.Theme.Validate`.
 
 `serde/yamlstrict` provides the shared helpers: `NormalizeYAML`,
-`DecodeStrict(data []byte, out any) error`.
+`DecodeStrict(data []byte, out any) error`, `DecodeMap(data []byte)`.
 
 ### 6.3 `serde/canonjson` — stable JSON encoding
 
@@ -490,8 +511,8 @@ Rules (also restate in AGENTS.md):
 `//go:generate go run ./cmd/gen -root ../../../.. -out assets_gen.go`
 
 The `-root` path points from `internal/platform/embed/assets/` to the Go module
-root. Config YAML and schemas are runtime files under repo-root `config/` and
-are not embedded in this asset map.
+root. Shared config YAML and schemas discovered in an enclosing repository
+(§8) are runtime files and are not embedded in this asset map.
 
 The generator walks, **from the configured roots**:
 
@@ -519,29 +540,46 @@ Virtual directories synthesized by prefix scan. `Open` of a missing key returns
 
 ---
 
-## 8. Shared config: `go-core/pkg/config`
+## 8. Shared config: `internal/platform/paths` + `internal/platform/configloader`
 
-`go-core/pkg/config` is the single Go package for repo-wide static config.
-It is reused by the CLI, sitebuild, and infrabuild.
+There is no `pkg/config`. Shared static config is handled by two app-agnostic
+platform packages.
 
 ### 8.1 Files
+
+When an enclosing repository provides them, the CLI can discover and validate:
 
 - `config/data/global.yaml` validated by `config/schema/global.schema.json`
 - `config/data/theme.yaml` validated by `config/schema/theme.schema.json`
 - `config/data/infra.yaml` validated by `config/schema/infra.schema.json`
 
-### 8.2 Discovery and load
+### 8.2 Discovery: `internal/platform/paths`
 
 ```go
+type Paths struct { Root, ConfigDataDir, ConfigSchemaDir string; GlobalFile, ThemeFile, InfraFile string; GlobalSchema, ThemeSchema, InfraSchema string; /* + derived sibling-tree dirs */ }
 func Resolve(rootOrStart string) (*Paths, error)
-func LoadGlobal(path string) (*Global, error)
-func LoadTheme(path string) (*Theme, error)
-func LoadInfra(path string) (*Infra, error)
-func ValidatePath(path string) error
 ```
 
-Loaders read schema files from `config/schema` at the resolved repo root,
-decode YAML with strict fields, and run semantic validation.
+`Resolve("")` walks upward from CWD; the discovered root is the first
+directory containing **both** `config/data/global.yaml` and
+`config/schema/global.schema.json`. The returned `Paths` also carries derived
+locations for sibling trees of the enclosing repository; overplane itself only
+reads the config files and schemas listed above.
+
+### 8.3 Loading: `internal/platform/configloader`
+
+```go
+type ValidationError struct{ Problems []jsonschema.Problem }
+func Load[T any](yamlText, schemaText, schemaName string) (*T, error)
+func LoadBytes[T any](yamlData, schemaData []byte, schemaName string) (*T, error)
+func Validate(yamlText, schemaText, schemaName string) ([]jsonschema.Problem, error)
+func ValidateBytes(yamlData, schemaData []byte, schemaName string) ([]jsonschema.Problem, error)
+```
+
+Generic, schema-driven: normalize YAML, validate against the schema document,
+then decode the validated instance into `T` via a JSON round-trip (§6.2).
+There are no hand-written `LoadGlobal`/`LoadTheme`/`LoadInfra` loaders in
+overplane; the CLI only validates the shared files (`config validate`, §9.4).
 
 ---
 
@@ -562,23 +600,23 @@ type ConfiglessCommand interface {
     Usage() string
     Run(ctx context.Context, args []string) error
 }
-type ConfigCommand interface {
-    Name() string
-    Usage() string
-    Run(ctx context.Context, cfg *config.Config, args []string) error
-}
 
 func Dispatch(ctx context.Context, r *Runner, args []string) error
 ```
 
-- `commandRegistry(r *Runner) map[string]any` returns a literal map of name →
-  command. Two small adapter structs lift plain handler funcs into the two
-  interfaces.
-- Dispatch: empty args → root usage to stderr, exit 2. `help|-h|--help` → root
-  usage to stdout, exit 0. Unknown command → error + usage, exit 2.
-  `ConfigCommand`s get `Discover` + `Load` run for them first.
+- As-built there is **only `ConfiglessCommand`** — no `ConfigCommand`
+  interface exists yet because no bootstrap command needs a loaded config
+  (commands that need paths call `paths.Resolve` themselves). Add a
+  config-bearing interface when the first such command appears.
+- `commandRegistry(r *Runner) map[string]commandInfo` returns a literal map of
+  name → `{name, one-line description, command value}`; descriptions feed the
+  root help.
+- Dispatch: empty args → root usage to **stdout**, exit 2 (`main` suppresses
+  the duplicate error line in this case). `help|-h|--help` → root usage to
+  stdout, exit 0. Unknown command → error + usage to stderr, exit 2. Every
+  dispatch is wrapped in a `cli.<command>` span when telemetry is attached.
 - Nested groups via a shared router:
-  `runSubcommandGroup(args, errW, group string, missingIsError bool, usageFn func(), handlers map[string]subcommandHandler) error`
+  `runSubcommandGroup(ctx, args, errW, group string, missingIsError bool, usageFn func(), handlers map[string]subcommandHandler) error`
   with shared `isHelpToken` handling.
 
 ### 9.2 Exit codes
@@ -599,13 +637,18 @@ Exported helpers: `ExitCode(err error) int`, plus per-code constructors.
 
 ### 9.3 Help
 
-**Root help** (`{{BINARY}}`, `{{BINARY}} help`):
+**Root help** (`{{BINARY}}`, `{{BINARY}} help`) is rendered by the dedicated
+`internal/platform/clihelp` package (`RenderRoot(w, RootSpec)`), not inline in
+`internal/cli`:
 
 1. Title line, themed: `{{BINARY}} - {{DESCRIPTION}} v{version} ({GOOS}/{GOARCH})`
-2. Dim meta line: build date + commit.
-3. Splash banner (§10).
-4. Sections: `Usage`, `Commands` (name colored, aligned, one-line description),
-   `Global flags`.
+2. Dim meta line: build date (calendar date only, no time) + commit + a
+   friendly note with the binary's on-disk size ("I am a X.X MB
+   executable.").
+3. Splash banner (§10) — below the meta line, above Usage.
+4. Sections: `Usage`, `Commands` (name colored, aligned, sorted, one-line
+   description), `Global flags`. Column padding is owned by `clihelp`; never
+   hand-roll root-help spacing in command code.
 
 **Per-command help** via `color.RenderHelp`:
 
@@ -628,26 +671,28 @@ header, dim commands). Every command and subcommand group must respond to
 | Command | Kind | Behavior |
 |---|---|---|
 | `version` | configless | print `{{BINARY}} v{version} ({commit}, {date})` |
-| `check` | configless | system checks, §12 |
-| `config validate [path]` | configless | validate `config/data/{global,theme,infra}.yaml` or one explicit supported config path; exit 0/3 |
-| `theme preview` | configless | render the resolved theme: 16 palette swatches (slot index, xterm index, colored block, role name), sample log lines at each level, a sample table, sample help block |
-| `demo` | configless | example TUI (§11.4) proving the shared TUI stack end-to-end |
+| `check [--json]` | configless | system checks, §12 |
+| `config validate [path]` | configless | validate the discovered `config/data/{global,theme,infra}.yaml` files (§8.1) or one explicit supported config path (schema chosen by basename); prints `<path> valid` per file; exit 0/3 |
+| `theme preview` | configless | render the resolved theme: header `Theme: <name> (<source>)`, 16 palette swatches (slot index, xterm index, colored block, role name), sample log lines at each level, a sample table, sample help block |
+| `demo` | configless | example TUI (§11.4) proving the shared TUI stack end-to-end; prints `selected=<id>` on selection |
 
 ---
 
 ## 10. Splash banner
 
 - `static/files/misc/banner.ans`: a **binary ANSI art file** containing raw
-  pre-colored escape sequences (xterm-256 only). The agent must generate a
-  tasteful placeholder banner programmatically (e.g. block-letter `{{PROJECT}}`
-  with a palette gradient) and save it as the `.ans` file — the human will
-  replace it with real art later. Width ≤ 80 columns.
-- Additionally a small hardcoded ASCII block (project name + `{{LICENSE}}`)
-  centered to 80 columns, printed above the `.ans` art.
+  pre-colored escape sequences. As-built this is the real committed artwork
+  and it uses **24-bit truecolor** sequences — the §4.1 xterm-256-only rule
+  applies to *program-generated* output, not to this pre-rendered asset.
+- The banner is embedded via the asset map and printed **verbatim whenever the
+  asset is present — including under `NO_COLOR`** (deliberate decision; the
+  art is meaningless without its escapes, and tests assert its presence). The
+  §19 `NO_COLOR` output-purity criterion therefore exempts the banner.
+- A plain one-line fallback (`{{PROJECT}} / {{LICENSE}}`) is printed only when
+  the embedded asset is missing; there is no separate hardcoded ASCII block
+  above the art.
 - Shown **only** on root help (no-args invocation and `help|-h|--help`); never
   on normal command runs or `--version`.
-- When color is disabled (§4.4), skip the `.ans` art entirely (it contains raw
-  escapes) and print only the ASCII block.
 
 ---
 
@@ -662,12 +707,16 @@ reused. New interactive needs = new shared shortcut here, not inline code.
 ### 11.2 Shortcuts (`tui/shortcuts.go`)
 
 ```go
+type Option struct{ Value, Label, Description string }
+type HintError struct{ Err error; HintText string }      // Error/Unwrap/Hint
+
 func ConfirmYesNo(ctx context.Context, title, desc string, defaultYes bool) (bool, error)
 func PromptString(ctx context.Context, title, desc, placeholder string, validate func(string) error) (string, error)
 func Select(ctx context.Context, title string, options []Option) (Option, error)
 func MultiSelect(ctx context.Context, title string, options []Option, initial []string) ([]Option, error)
 func ChoosePath(ctx context.Context, title, startDir string, onlyDirs bool) (string, error)
 func OpenEditor(ctx context.Context, path string) error   // $VISUAL then $EDITOR
+func EnsureInteractive(hint string) error                  // TTY precheck for commands
 ```
 
 ### 11.3 Cross-cutting requirements
@@ -688,43 +737,56 @@ type Item struct{ ID, Title, Description, Detail string }
 func Run(items []Item, title string) (*Item, error)   // nil on quit
 ```
 
-Split-pane bubbletea app: filterable list (left, bubbles/list) + detail
-viewport (right), themed from the palette. Keys: ↑/↓ move, `/` filter, Enter
-select, q/esc/ctrl-c quit. The `demo` command feeds it sample items and then
-runs a `ConfirmYesNo` on the selection, demonstrating composition.
+As-built: a **hand-rolled bubbletea model** (no `bubbles/list`) rendering a
+boxed item table plus a detail pane below it, themed from the palette, with a
+footer line showing a live clock and load average (refreshed by a tick). Keys:
+↑/↓ or j/k move, Home/End jump, Enter select, q/esc/ctrl-c quit (no filter
+key). The `demo` command feeds it sample items, guards non-TTY via
+`tui.EnsureInteractive` (mapped to exit 6), and prints `selected=<id>` for the
+chosen item.
 
 ### 11.5 Testability
 
-Shortcut entry points are injectable package vars (e.g. `var runForm = ...`)
-so command tests can stub interactive flows without a PTY.
+As-built, shortcuts gate on a TTY check (`requireTTY`) before constructing any
+huh form, so non-PTY tests exercise the `ErrNotInteractive`/hint path and
+command tests assert exit code 6 for `demo` in a pipe. There are no injectable
+`var runForm`-style hooks yet; add them when a command needs its interactive
+happy path covered without a PTY.
 
 ---
 
 ## 12. System checks: `check` command
 
-`{{BINARY}} check` runs all checks, prints a themed table (name, status,
-detail), and exits 0 if all pass, 6 if any fail. `--json` emits a JSON array
-instead (via `serde/canonjson`, §6.3). Failures include a `hint` in logs and a
-hint column in the table.
+`{{BINARY}} check` runs all checks, prints a themed table (Name, Status,
+Detail, Hint), and exits 0 if all pass, 6 if any fail. Statuses `not
+installed`, `daemon unavailable`, `missing`, and `invalid` fail the run;
+`warning` does not. `--json` emits a canonical JSON array instead
+(`canonjson.MarshalIndent`, §6.3) of `{name, status, detail, hint}` objects.
 
-**Checks (presence/format only — no network calls):**
+**Checks (presence/format only — no network calls).** The engine/API-key lists
+are compiled-in defaults (`docker`/`podman`; `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `GEMINI_API_KEY`); there is no `checks.*` config section
+yet.
 
-1. **Container engines** — for each of `{{CONTAINER_ENGINES}}` (or
-   `checks.container_engines` from config): locate binary on `PATH`, then run
-   `<engine> version` with a 3-second timeout (`exec.CommandContext`). Statuses:
-   `ok` / `not installed` / `daemon unavailable`. Implement behind a small
-   interface (`type Engine interface { Name() string; Available(ctx) error }`)
-   with an injectable exec runner for tests.
-2. **API keys** — for each env var in `{{API_KEYS}}` (or `checks.api_keys`):
-   - present and non-empty after `strings.TrimSpace`
-   - no interior whitespace or shell-quote characters
-   - *(advisory)* known-prefix format checks where applicable
-     (`sk-ant-` for `ANTHROPIC_API_KEY`, `sk-` for `OPENAI_API_KEY`); a wrong
-     prefix is a **warning**, not a failure.
-   Never print key material — only the var name and a masked length
-   (`set, 51 chars`).
-3. **Git** — `git` on `PATH` and CWD inside a work tree (warning if not).
-4. **Theme** — resolved theme source (env/file/embedded) and schema validity.
+1. **Container engines** (`engine:<name>`) — locate binary on `PATH`, then run
+   `<engine> version` with a 3-second timeout (`exec.CommandContext`).
+   Statuses: `ok` / `not installed` / `daemon unavailable`. Implemented behind
+   `type Engine interface { Name() string; Version(ctx) (string, error) }`
+   with an injectable package-level exec runner (`runExec`) for tests; the
+   reported engine version string lands in the hint column.
+2. **API keys** (`api-key:<VAR>`) —
+   - present and non-empty after `strings.TrimSpace` → else `missing`
+   - no interior whitespace or shell-quote characters → else `invalid`
+   - known-prefix format checks (`sk-ant-` for `ANTHROPIC_API_KEY`, `sk-` for
+     `OPENAI_API_KEY`); a wrong prefix is a **warning**, not a failure.
+   Detail shows only a masked length (`set, 51 chars`). **Decision:** the hint
+   column additionally shows the first 5 characters as `prefix=sk-an` to make
+   misconfigured keys diagnosable; full key material is never printed.
+3. **Git** — `git` on `PATH` and CWD inside a work tree; both conditions are
+   warnings only, and the success hint shows `branch=… commit=…`.
+
+There is **no theme check** (the original item 4); theme problems surface via
+`theme preview` and the startup warning instead.
 
 ---
 
@@ -734,15 +796,21 @@ Bash wrapper at the module root, committed executable (`#!/usr/bin/env bash`,
 `set -euo pipefail`):
 
 - Binary location: `dist/{{BINARY}}`.
-- **Build-if-stale**: rebuild when the binary is missing, or any `*.go`,
-  `go.mod`, `go.sum`, or `static/**` file is newer than the binary (use
-  `find -newer`), or `{{BINARY}}_FORCE_BUILD=1`.
-- Build command: `go build -trimpath -o dist/{{BINARY}} ./cmd/{{BINARY}}`,
-  echoed to stderr when triggered.
+- **Build-if-stale**: rebuild when the binary is missing, or
+  `{{ENV_PREFIX}}_FORCE_BUILD=1`, or any of the following is newer than the
+  binary (`find -newer`): `*.go`, `go.mod`, `go.sum`, `VERSION`,
+  `static/**`, or any `*.yaml`/`*.json` under an enclosing repository's
+  `config/data/` and `config/schema/` when present (so shared config/schema
+  edits invalidate the build too).
+- Build command mirrors `make build`: `CGO_ENABLED=0 go build -trimpath
+  -ldflags "<-s -w -buildid= -X version.{Version,Commit,Date}=…>"
+  -buildvcs=false -o dist/{{BINARY}} ./cmd/{{BINARY}}`, stamping version from
+  `VERSION`, commit from git, and date honoring `SOURCE_DATE_EPOCH` — wrapper
+  builds carry full build metadata, identical to Makefile builds.
 - Then `exec dist/{{BINARY}} "$@"` — argv and exit code pass through untouched.
 - Must work when invoked from any CWD (resolve script dir via
-  `cd "$(dirname "${BASH_SOURCE[0]}")"` before building; run the binary with
-  the **caller's** original CWD restored).
+  `BASH_SOURCE` before building; run the binary with the **caller's** original
+  CWD restored).
 
 ---
 
@@ -752,32 +820,42 @@ Bash wrapper at the module root, committed executable (`#!/usr/bin/env bash`,
 
 | Target | Behavior |
 |---|---|
-| `make` / `make ci` | gate-go-version → gate-generate (assets drift check) → gate-fmt (gofmt + goimports diff) → gate-vet → gate-lint → gate-test (unit + cheap integration-realistic tests, `-race`) → gate-integration (`-tags=integration`: toolchain/binary-exec tests, §14.6) → gate-coverage → build |
-| `make ci-rehearse` | re-run the full `ci` pipeline in a clean temp checkout with `CI=true`; local pass + CI fail is treated as a process bug |
+| `make` / `make ci` | gate-go-version → gate-generate (assets drift check) → gate-fmt (gofmt + goimports rewrite, then `git diff --exit-code`) → gate-vet → gate-lint → gate-test (unit + cheap integration-realistic tests, `-race`) → gate-integration (`-tags=integration`: toolchain/binary-exec tests, §14.6) → gate-coverage → build |
+| `make ci-rehearse` | `git clone --local` the repo into a temp dir and re-run the full `ci` pipeline there with `CI=true`; local pass + CI fail is treated as a process bug |
 | `make build` | native `dist/{{BINARY}}` |
 | `make dev` | rebuild loop (`entr` if present, else sleep poll) + run |
 | `make dist` | clean + ci + cross-compile linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64 + `SHA256SUMS` |
-| `make clean` | remove `dist/`, coverage artifacts |
+| `make clean` | remove `dist/`, `.coverage/`, `.tmp/` |
+
+The Makefile pins `GOTOOLCHAIN` to the exact toolchain patch version and
+installs helper tools (goimports, golangci-lint) into a module-local
+`.tmp/bin` prepended to `PATH`.
 
 Release build flags: `CGO_ENABLED=0 -trimpath -ldflags "-s -w -buildid= -X {{MODULE}}/internal/platform/version.Version=$(VERSION) -X ...Commit=$(COMMIT) -X ...Date=$(DATE)" -buildvcs=false`, honoring `SOURCE_DATE_EPOCH` for reproducibility.
 
 ### 14.2 Lint: `.golangci.yml`
 
-golangci-lint v2, enabled linters at minimum: `copyloopvar`, `depguard`,
-`dupl`, `errorlint`, `exhaustive`, `funlen`, `gocritic`, `gocyclo` (min 10),
-`gosec`, `lll` (120), `misspell`, `nakedret`, `nolintlint`, `prealloc`,
-`revive` (error severity). Depguard rule: deny stdlib `log` everywhere except
-`internal/platform/log`.
+golangci-lint v2, enabled linters: `copyloopvar`, `depguard`, `dupl`,
+`errorlint`, `exhaustive`, `funlen`, `gocritic`, `gocyclo` (min 10), `gosec`,
+`lll` (120), `misspell`, `nakedret`, `nolintlint`, `prealloc`, `revive`;
+`errcheck` is disabled. Depguard rule (lax list-mode): deny stdlib `log`
+repo-wide. As-built exclusions: revive `package-comments`/`exported`, a fixed
+set of gosec rules (G204/301/302/304/306/702/703), gocyclo in tests and for a
+named list of long dispatch/encoder functions, and funlen for `run`/`write`.
+`make ci` always installs the latest golangci-lint v2 into `.tmp/bin` (it does
+not reuse a preinstalled binary).
 
 ### 14.3 Coverage: `scripts/coveragegate`
 
-Merge unit + integration cover profiles. Fail if **any** of:
-- total coverage < `{{COVERAGE_MIN}}`
-- any **package** < `{{COVERAGE_MIN}}`
-- any **file** < `{{COVERAGE_MIN}}`
+Merge unit + integration cover profiles into `.coverage/coverage.out` and run
+`scripts/coveragegate` over the result, excluding generated `assets_gen.go`.
 
-`COVERAGE_MIN ?= {{COVERAGE_MIN}}` in the Makefile; never lowered to make CI
-pass.
+**As-built decision:** the gate is **report-only** — it prints
+`coverage report complete: total N% (floor M%)` and fails only if the profile
+is missing; it does not currently enforce the total/package/file floors from
+the original prompt. `COVERAGE_MIN ?= {{COVERAGE_MIN}}` remains the declared
+floor in the Makefile; restoring hard enforcement is future work, and the
+floor must never be lowered to make CI pass once enforced.
 
 ### 14.4 Go version gate: `scripts/checkgoversion`
 
@@ -786,84 +864,23 @@ on mismatch.
 
 ### 14.5 GitHub Actions CI
 
-Generate a workflow at the **repository root**:
-`{{REPO_ROOT_REL}}/.github/workflows/{{TARGET_DIR}}.yml`. It runs build +
-tests on any change under the Go module directory.
+`make ci` is the single source of truth; workflows add no extra gates (no
+separate lint action, no coverage artifact). The module owns its workflows
+under `.github/workflows/` at the module root, shipping with the public
+`github.com/overplane/overplane` repository:
 
-Action versions below are the latest stable majors as of June 2026
-(`actions/checkout` v6.0.3, `actions/setup-go` v6.4.0,
-`golangci/golangci-lint-action` v9.2.1, `actions/upload-artifact` v7.0.1).
-The agent MUST verify at generation time that these are still the latest
-stable majors and bump if newer ones exist; reference actions by major tag.
+- `ci.yml` — `make ci` on push/PR to main, with `permissions: contents: read`
+  and per-ref concurrency.
+- `release.yml` — GoReleaser (`.goreleaser.yaml`) on `v*` tags: cross-compiled,
+  upx-packed bare executables.
+- `npm-publish.yml` — publishes the `npm/` wrapper package.
 
-```yaml
-name: {{TARGET_DIR}}
+When overplane is vendored inside a larger repository, that repository may run
+its own minimal workflow invoking `make ci` in this module; such workflows are
+owned by the enclosing repository and are outside this spec.
 
-on:
-  push:
-    branches: [main]
-    paths:
-      - '{{TARGET_DIR}}/**'
-      - 'config/data/**'
-      - 'config/schema/**'
-      - '.github/workflows/{{TARGET_DIR}}.yml'
-  pull_request:
-    paths:
-      - '{{TARGET_DIR}}/**'
-      - 'config/data/**'
-      - 'config/schema/**'
-      - '.github/workflows/{{TARGET_DIR}}.yml'
-
-concurrency:
-  group: {{TARGET_DIR}}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
-defaults:
-  run:
-    working-directory: {{TARGET_DIR}}
-
-jobs:
-  ci:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: '{{TARGET_DIR}}/go.mod'
-          cache-dependency-path: '{{TARGET_DIR}}/go.sum'
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          working-directory: {{TARGET_DIR}}
-      - name: ci
-        run: make ci
-        env:
-          CI: 'true'
-      - name: coverage artifact
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage
-          path: {{TARGET_DIR}}/.coverage/
-          if-no-files-found: ignore
-```
-
-Rules:
-
-- **`make ci` is the single source of truth**; the workflow must not duplicate
-  individual gates beyond the lint annotation step (which runs the same
-  `.golangci.yml`). Any local-pass/CI-fail divergence is a process bug (§14.1
-  `ci-rehearse` exists to catch it).
-- The lint action installs the latest stable golangci-lint v2; `make ci` must
-  tolerate a preinstalled binary (use it if compatible, else fetch its pinned
-  version) so the two stay consistent.
-- Coverage gate output is written under `.coverage/` so the artifact step can
-  pick it up.
+Rule: any local-pass/CI-fail divergence is a process bug (§14.1 `ci-rehearse`
+exists to catch it).
 
 ### 14.6 Testing strategy: integration-realism by default
 
@@ -898,21 +915,21 @@ Both profiles merge into the coverage gate (§14.3).
   to build a hermetic world per test.
 - Subprocesses get explicit env (`cmd.Env`), never inherited ambient state.
 
-**Mandated integration-style tests** (minimum set; extend the same style to
-every new module):
+**Integration-style tests as-built** (extend the same style to every new
+module):
 
 | Area | Tier | Test |
 |---|---|---|
 | `serde/canonjson`, `serde/yamlcanon` | default | write canonical output to real temp files, re-read, re-marshal → byte-identical; `hashutil.SumFile` of two semantically-equal-but-differently-ordered inputs → same short hash |
-| `serde/jsonschema` + `yamlstrict` | default | validate real YAML fixture files (valid + invalid: unknown key, wrong type, bad enum) against the real embedded schemas; assert exact JSON Pointers in `Problem`s |
-| `config` | default | full discovery + load against real temp project trees: nested CWD upward walk, valid config, schema violations with pointer assertions, `KnownFields` rejection, semantic-check failures |
-| embed FS generator | integration | run the real `cmd/gen` against a temp fixture tree (files with known contents incl. binary data), emit `assets_gen.go` into a temp package, **compile it with `go build`** (compile-only, no exec), and assert the generator output round-trips byte-for-byte via a parallel decode; runtime FS unit tests run against the committed assets in the default tier |
-| telemetry | default | start an **in-process OTLP/gRPC collector** (implementing the trace + metrics service protos) on `127.0.0.1:0`; `t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", addr)`; `telemetry.Init`; emit spans + counter/histogram values; assert the collector received them with expected names/attrs; also assert the disabled path (env unset → noop, instant shutdown, no connections) |
-| `check` | default | fake `docker`/`podman` shim scripts written into a temp dir prepended to `PATH`: success, nonzero exit, and a sleep-beyond-timeout shim asserting the 3s `CommandContext` kill; API-key checks via `t.Setenv` |
-| `env` | default | real `.env` files in temp dirs: parsing edge cases (quotes, escapes, `export`, comments), upward discovery stop at `.git`, and precedence (process env always wins) |
-| theme resolution | default | real files exercising the §4.3 order: `{{ENV_PREFIX}}_THEME` path beats discovered `config/data/theme.yaml` beats embedded fallback; invalid theme file falls through with a logged warning |
-| CLI end-to-end | integration | `TestMain` compiles the real binary **once** into a shared temp dir; tests exec it against temp project dirs asserting stdout/stderr content and exact exit codes (§9.2 table): help/banner, `version`, `check --json`, `config validate` happy + failure paths, `NO_COLOR` output purity |
-| `cli.sh` | integration | shell-driven: first run builds, second run does not rebuild (assert binary mtime unchanged), touching a `.go` file triggers rebuild, args + exit codes pass through |
+| `serde/jsonschema` + `yamlstrict` | default | validate real YAML fixture files (valid + invalid: unknown key, wrong type, bad enum) against real schemas; assert exact JSON Pointers in `Problem`s |
+| `paths` + `configloader` | default | discovery + load against real temp project trees: nested CWD upward walk, valid config, schema violations with pointer assertions |
+| embed FS generator | default | run the real `cmd/gen` against a temp fixture tree (incl. binary data) and assert the emitted `assets_gen.go` round-trips byte-for-byte via gzip decode (no `go build` compile step — the committed generated file is compiled by every build anyway); runtime FS tests run against the committed assets |
+| telemetry | default | the `telemetrytest` **in-process OTLP/gRPC collector** on `127.0.0.1:0`; `t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", addr)`; `telemetry.Init`; emit spans; assert receipt; also assert the disabled path (env unset → noop, instant shutdown, no connections) |
+| `check` | default | fake engine shim scripts written into a temp dir prepended to `PATH` (`t.Setenv`); API-key checks via `t.Setenv`; the exec runner is also injectable (`runExec`) |
+| `env` | default | real `.env` files in temp dirs: parsing edge cases (quotes, `export`, comments), upward discovery stop at `.git`, and precedence (process env always wins) |
+| theme resolution | default | real files exercising the §4.3 order: `{{ENV_PREFIX}}_THEME` path beats discovered `config/data/theme.yaml` beats built-in fallback; invalid theme file falls through |
+| CLI end-to-end | integration | `cmd/overplane/integration_test.go` builds the real binary with `go build` into a temp dir and execs it (`--version`), asserting output and exit codes |
+| `cli.sh` | integration | shell-driven: first run builds, second run does not rebuild (binary mtime unchanged), wrapper help carries real build metadata (version/commit/date stamped) |
 
 ---
 
@@ -967,48 +984,56 @@ norms (these also govern *this* bootstrap generation):
 - **Embedded assets**: edit sources under `static/` (or `config/data/theme.yaml`),
   re-run `go generate ./...`, commit the regenerated `assets_gen.go`.
 
-Also generate `CONTRIBUTING.md` (human-facing condensed version) and
-`.cursor/rules/agents.mdc` + `CLAUDE.md`, each a one-liner pointing at
-`AGENTS.md` as canonical.
+The as-built `AGENTS.md` additionally mandates `internal/platform/clihelp` for
+all root-help rendering (banner placement, column padding).
+
+Also generated: `CONTRIBUTING.md` (human-facing condensed version) and
+`.cursor/rules/agents.mdc` + `CLAUDE.md` at the module root, each a one-liner
+pointing at `AGENTS.md` as canonical.
 
 ---
 
 ## 16. `cmd/{{BINARY}}/main.go` contract
 
-Thin `main`:
+Thin `main`, as-built order:
 
-1. Parse global flags (§5.5) with stdlib `flag`, stopping at the first
-   non-flag arg (subcommand).
-2. Load `.env` then normalize env (§17).
-3. `log.Configure(...)`; resolve theme (§4.3); `telemetry.Init(ctx)` with
-   deferred shutdown.
-4. Install signal handling: `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)`.
+1. Load `.env` then normalize env (§17) — first, so env values can serve as
+   flag defaults.
+2. Parse global flags (§5.5) with stdlib `flag`, stopping at the first
+   non-flag arg (subcommand). `--version` short-circuits here.
+3. Open `--log-file` if set (append, 0644); `log.Configure(...)` writing to
+   stderr or the file; `color.ApplyResolvedTheme("")` (§4.3), logging a
+   warning with a hint on failure.
+4. Install signal handling: `signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)`;
+   `telemetry.Init(ctx)` with deferred `Shutdown`.
 5. `cli.Dispatch(ctx, runner, rest)`; map returned error → exit code via
-   `cli.ExitCode`; `os.Exit` from `main` only (a `run(args []string) int`
-   inner function keeps `main` testable).
+   `cli.ExitCode` (suppressing the redundant error line for the bare no-args
+   usage case); `os.Exit` from `main` only (a
+   `run(args []string, stdout, stderr io.Writer) int` inner function keeps
+   `main` testable).
 
 ---
 
 ## 17. Env loading and normalization: `internal/platform/env`
 
-- **`.env` autoload**: at startup, look for `.env` in CWD then walk upward to
-  the repo root (stop at `.git`). Parse with a small **stdlib-only**
-  implementation: `KEY=value` lines, `#` comments, blank lines, optional
-  `export ` prefix, single/double quotes with standard escapes in
-  double-quotes. Loaded values **never override** variables already present in
-  the process environment.
-- **Normalization** (`func Normalize()`): for every var matching
-  `{{ENV_PREFIX}}_*`: trim whitespace from values; warn (structured log,
-  debug level) on empty values; expose typed getters
-  `String(name, def)`, `Bool(name, def)`, `Int(name, def)` that look up
-  `{{ENV_PREFIX}}_<NAME>`.
-- **Passthrough allowlist**: `env.passthrough` in config (§8.1) validated
-  against POSIX name regex `^[A-Z_][A-Z0-9_]*$`; helper
-  `Passthrough(names []string) map[string]string` copies present vars,
-  trimming whitespace (this is the hook future subprocess/container features
-  will use).
-- Respected external standards: `NO_COLOR`, `CLICOLOR_FORCE`,
-  `XDG_CONFIG_HOME`, `VISUAL`, `EDITOR`, `ACCESSIBLE`, `OTEL_*`.
+- **`.env` autoload** (`func Load(ctx, startDir) error`): look for `.env` in
+  CWD then walk upward (stop once a `.git` directory is seen without a
+  `.env`). Parse with a small **stdlib-only** implementation: `KEY=value`
+  lines, `#` comments (full-line and trailing ` #`), blank lines, optional
+  `export ` prefix, single quotes verbatim, double quotes via
+  `strconv.Unquote`. Loaded values **never override** variables already
+  present in the process environment.
+- **Normalization** (`func Normalize()`): trim whitespace from the value of
+  every var matching `{{ENV_PREFIX}}_*`. Typed getters `String(name, def)`,
+  `Bool(name, def)`, `Int(name, def)` look up `{{ENV_PREFIX}}_<NAME>`.
+  (No debug-level warning on empty values as-built.)
+- **Passthrough**: helper `Passthrough(names []string) map[string]string`
+  copies present vars, trimming whitespace — the hook future
+  subprocess/container features will use. There is **no `env.passthrough`
+  config section yet**; the allowlist becomes config-driven when the first
+  consumer lands.
+- Respected external standards: `NO_COLOR`, `CLICOLOR_FORCE`, `VISUAL`,
+  `EDITOR`, `ACCESSIBLE`, `OTEL_*`.
 
 ---
 
@@ -1023,55 +1048,61 @@ type Providers struct {
 func Init(ctx context.Context) (*Providers, error)
 func (p *Providers) StartSpan(ctx context.Context, name string) (context.Context, trace.Span)
 func (p *Providers) Enabled() bool
+func (p *Providers) Shutdown(ctx context.Context) error
 func Global() *Providers
 ```
 
-- **Enabled iff `OTEL_EXPORTER_OTLP_ENDPOINT` is non-empty**; otherwise noop
-  tracer + meter providers, zero overhead, no warnings.
+- **Enabled iff `OTEL_EXPORTER_OTLP_ENDPOINT` is non-empty** (an
+  `http(s)://` scheme prefix is stripped; the gRPC connection is insecure);
+  otherwise noop tracer + meter providers, zero overhead, no warnings.
 - OTLP/gRPC trace + metric exporters; resource attrs:
   `service.name={{OTEL_SERVICE}}`, `service.version` (from version pkg),
   `service.instance.id` (hostname). W3C tracecontext + baggage propagation.
-- Metric naming convention: `{{BINARY}}.<area>.<thing>` — instrument at least:
-  `{{BINARY}}.check.runs` (counter, attr `status`),
-  `{{BINARY}}.check.duration` (histogram, seconds),
-  `{{BINARY}}.cli.dispatches` (counter, attr `command`).
 - Every command dispatch wrapped in a span `cli.<command>`.
-- Provide a `telemetrytest` helper package with: (a) an in-memory collector
-  for fast metric assertions, and (b) an **in-process OTLP/gRPC collector**
-  implementing the trace + metrics service protos, listening on
-  `127.0.0.1:0`, exposing received spans/metrics for assertions — used by the
-  §14.6 telemetry integration test and reusable by future features.
+- **As-built scope:** no metric instruments are registered yet. The
+  `{{BINARY}}.<area>.<thing>` naming convention
+  (`{{BINARY}}.check.runs` counter, `{{BINARY}}.check.duration` histogram,
+  `{{BINARY}}.cli.dispatches` counter) remains the plan for the first feature
+  that needs metrics; the meter provider plumbing is in place.
+- `telemetrytest` provides an **in-process OTLP/gRPC collector** implementing
+  the trace + metrics service protos, listening on `127.0.0.1:0`, exposing
+  received spans/metrics for assertions — used by the §14.6 telemetry test and
+  reusable by future features.
 
 ---
 
-## 19. Acceptance criteria
+## 19. Acceptance criteria (as accepted)
 
-The agent's work is done when ALL of the following hold:
+The bootstrap was accepted against the following, adjusted from the original
+prompt where decisions in Appendix B changed the contract:
 
 1. `make ci` passes from a clean checkout (fmt, vet, lint, race tests,
-   integration tests, coverage ≥ {{COVERAGE_MIN}} at total/package/file
-   granularity, generate-drift check, Go version gate).
+   integration tests, coverage report (§14.3), generate-drift check, Go
+   version gate).
 2. `make ci-rehearse` passes.
 3. `./cli.sh version` builds (first run) and prints the version; a second
-   invocation does **not** rebuild; touching any `.go` file triggers rebuild.
+   invocation does **not** rebuild; touching any watched input (`*.go`,
+   `VERSION`, discovered config/schema YAML/JSON) triggers rebuild.
 4. `./cli.sh` (no args) prints the themed root help with splash banner, exit 2;
-   `./cli.sh help` same output, exit 0; `NO_COLOR=1 ./cli.sh help | grep -c $'\x1b'`
-   outputs 0.
+   `./cli.sh help` same output, exit 0. With `NO_COLOR=1`, all
+   *program-generated* output is escape-free; the pre-rendered banner is
+   exempt (§10).
 5. `./cli.sh theme preview` renders 16 swatches, sample logs, a table, and a
-   help block; honors a repo-root `config/data/theme.yaml` edit without rebuild
-   (file resolution beats embedded copy).
+   help block; honors a discovered `config/data/theme.yaml` edit without
+   rebuild (file resolution beats the built-in default).
 6. `./cli.sh check` and `./cli.sh check --json` run all checks from §12 with
-   correct exit codes (0 all-pass, 6 any-fail) and never print key material.
+   correct exit codes (0 all-pass/warnings-only, 6 any-fail) and never print
+   full key material (masked length + 5-char prefix only).
 7. `./cli.sh config validate` against a deliberately broken YAML (unknown key,
-   wrong type) prints JSON-Pointer-addressed problems and exits 3; valid file
-   exits 0.
-8. `./cli.sh demo` runs the nav TUI in a TTY; in a non-TTY pipe it exits with
-   the `ErrNotInteractive` hint instead of hanging.
+   wrong type) prints JSON-Pointer-addressed problems and exits 3; valid files
+   exit 0.
+8. `./cli.sh demo` runs the nav TUI in a TTY; in a non-TTY pipe it exits 6
+   with the `ErrNotInteractive` hint instead of hanging.
 9. `--log-format=json` produces one valid JSON object per line with ordered
    `time`, `level`, `message` keys; `--log-format=pretty -v` shows `file=` and
    `symbol=` provenance.
 10. `OTEL_EXPORTER_OTLP_ENDPOINT` unset → no telemetry connections attempted
-    (verify: no goroutine leaks, instant shutdown).
+    (no goroutine leaks, instant shutdown).
 11. `go generate ./...` is idempotent (`git diff --exit-code` clean).
 12. `AGENTS.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `.cursor/rules/agents.mdc`,
     `README.md` (brief: what the CLI is, how to build, command table) all
@@ -1080,30 +1111,17 @@ The agent's work is done when ALL of the following hold:
     `canonjson.Marshal` / `yamlcanon.Marshal` output regardless of map
     insertion order; `check --json` output has lexicographically sorted keys.
 14. Hashing golden test passes: `hashutil.SumString("")` equals the first 12
-    hex chars of the empty SHA-256 digest (`e3b0c44298fc`); `SumFile` on a
-    large temp file matches `sha256sum | cut -c1-12` and does not read the
-    whole file into memory.
-15. All timestamps in logs and emitted files are UTC RFC3339; grep finds no
-    `time.Now()` outside `internal/platform/timeutil`.
-16. At generation time, `go list -m -u all` reports no newer stable versions
-    for direct dependencies (all deps added via `@latest`).
-17. `.github/workflows/{{TARGET_DIR}}.yml` exists at the repo root per §14.5,
-    is path-filtered to the module directory (plus `config/data/theme.yaml` and
-    itself), runs `make ci`, validates with `actionlint` (or careful manual
-    YAML review if actionlint is unavailable), and references only
-    latest-stable action majors (verified at generation time).
-18. Every test mandated in §14.6 exists in its designated tier and passes:
-    serde round-trips on real temp files, schema validation against real
-    fixture files with pointer assertions, config discovery/load on real temp
-    trees, embed-generator generate+compile loop (`-tags=integration`),
-    telemetry against the in-process OTLP collector on `127.0.0.1:0`, `check`
-    against PATH shims (including the timeout shim), `.env` parsing on real
-    files, theme resolution order, CLI end-to-end binary execution
-    (`-tags=integration`), and `cli.sh` rebuild semantics
-    (`-tags=integration`).
-19. Hermeticity holds: the default-tier suite passes with external networking
-    unavailable, with `HOME`/`XDG_CONFIG_HOME` pointed at empty temp dirs,
-    and grep finds no hardcoded port numbers in test code (`:0` only).
+    hex chars of the empty SHA-256 digest (`e3b0c44298fc`); `SumFile` streams
+    (no full-file read).
+15. All timestamps in logs and emitted files are UTC RFC3339; no `time.Now()`
+    outside `internal/platform/timeutil`.
+16. All direct dependencies were added via `go get @latest` at generation
+    time.
+17. `.github/workflows/ci.yml` exists at the module root per §14.5 and runs
+    `make ci`.
+18. Every test in the §14.6 table exists in its designated tier and passes.
+19. Hermeticity holds for the default tier: no external network access, no
+    fixed ports (`127.0.0.1:0` only), hermetic env via `t.Setenv`.
 
 ---
 
@@ -1124,7 +1142,7 @@ The agent's work is done when ALL of the following hold:
 11. `check`, `config validate`, `theme preview`.
 12. `platform/tui` + `tui/nav`; `demo`.
 13. `cli.sh`, full Makefile gates, `.golangci.yml`, `scripts/coveragegate`.
-14. GitHub Actions workflow (§14.5) at the repo root.
+14. GitHub Actions workflows (§14.5) under the module's `.github/workflows/`.
 15. `AGENTS.md` + docs; final `make ci` + `make ci-rehearse`.
 
 ---
@@ -1134,8 +1152,8 @@ The agent's work is done when ALL of the following hold:
 These answers were supplied before implementation and are normative for this
 bootstrap.
 
-1. The CLI terminal theme is the `terminal` section of the shared repository-root
-   `config/data/theme.yaml`; there is no module-local `go-core/config/` theme.
+1. The CLI terminal theme is the `terminal` section of a discovered shared
+   `config/data/theme.yaml`; there is no module-local `config/` theme.
 2. The default 16-slot terminal palette is derived from the existing brand
    light-mode autumn colors by choosing nearby xterm-256 indices.
 3. The Go module path is `github.com/overplane/overplane`.
@@ -1147,14 +1165,61 @@ bootstrap.
 9. The theme upward walk skips non-CLI theme files at debug level; only an
    explicit `OVERPLANE_THEME` path logs a warning/error when invalid.
 10. Do not keep a separate CLI project config; the CLI validates the shared
-    repo config files under `config/data/`.
-11. `go-core/.cursor/rules/agents.mdc` is the module-scoped Cursor rule.
+    config files discovered under `config/data/`.
+11. `.cursor/rules/agents.mdc` is the module-scoped Cursor rule.
 12. Initial `VERSION` is `0.0.1`.
-13. Add an Apache-2.0 `LICENSE` file inside `go-core/`.
+13. Add an Apache-2.0 `LICENSE` file at the module root.
 14. Use a single implementation commit after the acceptance gates pass.
 15. After acceptance passes, set this spec frontmatter `status` to `closed`.
+    **Superseded:** the spec-metadata schema's `status` enum is
+    `draft | active | deprecated | superseded` — there is no `closed`. The
+    spec remains `active` (implemented, not deprecated) until a later spec
+    supersedes it.
 
-Implementation adjustment: config loading is split between `go-core/internal/platform/configloader`
-and per-build generated `internal/config` packages.
-All project-wide static YAML lives under `config/data/`, all JSON Schema lives
-under `config/schema/`, and sitebuild/infrabuild own generated config types.
+---
+
+## Appendix B. As-built record (deviations and decisions)
+
+Summary of where the implementation deliberately diverged from the original
+prompt. Details are folded into the section bodies above.
+
+1. **Config architecture (§3, §8).** No `pkg/config`. Enclosing-repository
+   discovery lives in `internal/platform/paths`; generic schema-validated YAML
+   loading in `internal/platform/configloader` (`Load[T]`/`Validate`, JSON
+   round-trip decode).
+2. **Root help renderer (§9.3).** Extracted into `internal/platform/clihelp`
+   (`RenderRoot`/`RootSpec`); banner sits below the build-date line, above
+   Usage.
+3. **Command interfaces (§9.1).** Only `ConfiglessCommand` exists; no command
+   needed a loaded config, so `ConfigCommand` was not built.
+4. **Banner (§10).** Real committed truecolor ANSI art, printed verbatim even
+   under `NO_COLOR`; plain one-line fallback only when the asset is missing.
+   No separate ASCII block.
+5. **Log level slots (§5.2, §4.3).** Fixed mapping error→2, warn→0, info→4,
+   debug→7; theme `terminal.log` overrides are schema-validated but not yet
+   applied.
+6. **`check` (§12).** Engine interface is `Version(ctx) (string, error)`;
+   statuses include `missing`/`invalid`/`warning`; hint column shows a 5-char
+   key prefix for diagnosability; no theme check; engine/key lists are
+   compiled-in (no `checks.*` config).
+7. **TUI nav (§11.4).** Hand-rolled bubbletea table+detail navigator (no
+   `bubbles/list`, no filter key); footer with clock and load average. `demo`
+   prints the selection instead of chaining `ConfirmYesNo`.
+8. **Coverage gate (§14.3).** Report-only as-built; floors not yet enforced.
+9. **Telemetry metrics (§18).** Span-per-dispatch only; no metric instruments
+   registered yet.
+10. **CI (§14.5).** Module-owned workflows (`ci.yml`, `release.yml` +
+    GoReleaser/upx, `npm-publish.yml`) live under the module's `.github/` and
+    ship with the public `github.com/overplane/overplane` repository
+    (post-bootstrap additions, together with `npm/` packaging).
+11. **`cli.sh` (§13).** Staleness inputs extended to `VERSION` and a
+    discovered enclosing repository's `config/data/` + `config/schema/`;
+    wrapper builds stamp the same ldflags metadata as `make build`.
+12. **Env (§17).** No empty-value debug warning; `Passthrough` helper exists
+    but the `env.passthrough` config allowlist is deferred until a consumer
+    exists.
+13. **Tests (§14.6).** Embed-generator test runs in the default tier as an
+    in-process round-trip (no `go build` compile loop); the integration tier
+    contains the binary-exec and `cli.sh` tests.
+14. **Versioning.** `VERSION` advanced past the initial `0.0.1` (release
+    cycles started).

@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://overplane.dev/schema/overplane.schema.json",
+  "title": "Overplane project file",
+  "description": "Per-project configuration for Overplane, stored as overplane.yaml at the project root. The file is created by `overplane init` from the defaults in this schema, is intended to be checked into version control, and is strictly validated (unknown keys are errors) every time Overplane reads it. All paths inside the file are relative to the directory that contains overplane.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "project", "dirs"],
+  "examples": [
+    {
+      "agent": {
+        "container": {
+          "agent_recipes": [
+            {"name": "codex", "version": "latest"},
+            {"name": "claude-code", "version": "latest"},
+            {"name": "gemini-cli", "version": "latest"}
+          ],
+          "base_image": "debian:bookworm-slim",
+          "env_passthrough": [],
+          "extra_packages": {
+            "debian": ["graphicsmagick"]
+          },
+          "runtime": "docker",
+          "setup_recipe": "debian"
+        }
+      },
+      "dirs": {
+        "cache": ".cache/overplane",
+        "specs": ".overplane/specs"
+      },
+      "model": {
+        "default": ""
+      },
+      "project": {
+        "description": "Evolve verified software.",
+        "name": "my-project"
+      },
+      "schema_version": 1
+    }
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Version of the overplane.yaml file format. Overplane validates this field strictly and refuses files written for a newer or unknown format revision rather than guessing at their meaning; it never rewrites the file to migrate it. The only accepted value is currently 1.",
+      "type": "integer",
+      "const": 1,
+      "default": 1
+    },
+    "project": {
+      "description": "Identity of the project that owns this overplane.yaml. These values appear in command output and future generated artifacts; they have no effect on tool behavior beyond labeling.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "Machine-friendly project name. `overplane init` derives the initial value from the name of the project directory, lowercased, with unsupported characters replaced by hyphens. Must start with a lowercase letter or digit and may contain lowercase letters, digits, dots, underscores, and hyphens.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "default": "my-project"
+        },
+        "description": {
+          "description": "Optional one-line, human-readable summary of the project. Used purely for display; leave empty if you have nothing to say yet.",
+          "type": "string",
+          "maxLength": 500,
+          "default": ""
+        }
+      }
+    },
+    "dirs": {
+      "description": "Filesystem layout of the Overplane-managed directories, expressed as paths relative to the project root (the directory containing overplane.yaml). Absolute paths and paths that escape the project root with `..` are rejected.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["specs", "cache"],
+      "properties": {
+        "specs": {
+          "description": "Directory that holds the project's specification documents (numbered Markdown files with YAML frontmatter). This is the durable home of your project's intent and is meant to be checked into version control.",
+          "type": "string",
+          "minLength": 1,
+          "default": ".overplane/specs"
+        },
+        "cache": {
+          "description": "Directory for disposable, machine-local working state (build artifacts, intermediate results). Unlike the specs directory, the cache must never be committed. Deleting the cache directory is always safe.",
+          "type": "string",
+          "minLength": 1,
+          "default": ".cache/overplane"
+        }
+      }
+    },
+    "model": {
+      "description": "Model and agent settings. This section is a forward-looking stub: it reserves the configuration surface for upcoming agent-driven features and currently has no effect on any command.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "description": "Free-form identifier of the default model that future agent features will use when a spec or command does not specify one. Leave empty to defer the choice.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "agent": {
+      "description": "Configuration of the project's agent container: the sandboxed environment in which AI coding agents (and `overplane agent shell`) run. `overplane agent setup` reads this section to build a local container image labeled with the project name; the section is optional, and a file without it behaves exactly as if the defaults shown here were written out.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["container"],
+      "properties": {
+        "container": {
+          "description": "How the agent container image is built and run. The image is built locally (nothing is pushed anywhere), tagged `overplane-<project.name>:latest` plus a content-hash tag, and rebuilt only when this configuration or the embedded setup recipes change.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "base_image", "setup_recipe", "agent_recipes"],
+          "properties": {
+            "runtime": {
+              "description": "Container engine that builds and runs the agent container. `docker` requires Docker with Buildx/BuildKit 0.13 or newer; `podman` requires Podman with reproducible-build support (Podman 5.x / Buildah 1.32 or newer). Overplane's internal abstraction already models asymmetric build/run engine pairs (for example building with nerdctl and running on k3s); exposing those pairs in this file is deferred to a later schema_version.",
+              "type": "string",
+              "enum": ["docker", "podman"],
+              "default": "docker"
+            },
+            "base_image": {
+              "description": "Image reference the agent container is built from, for example `debian:bookworm-slim` or `alpine:3`. Its OS flavor must match the selected setup_recipe: the recipe's provisioning scripts use the corresponding package manager and will fail at build time on a mismatched base.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "default": "debian:bookworm-slim"
+            },
+            "setup_recipe": {
+              "description": "Name of the built-in, embedded provisioning recipe that prepares the base image: OS updates, a broad developer toolchain (Go, Rust, Node.js, Python with uv, z3, build tools, ripgrep, and friends), project extra packages, and a container user mirroring your host identity. The recipe also determines how the configured agent recipes are installed and which extra_packages key applies (`debian` uses apt and the `debian` list; `alpine` uses apk and the `alpine` list). See the Agent Environment reference for exactly what each recipe installs.",
+              "type": "string",
+              "enum": ["debian", "alpine"],
+              "default": "debian"
+            },
+            "extra_packages": {
+              "description": "Additional OS packages to install into the agent container, keyed by package family. Only the key matching the selected setup_recipe's family is used (for example `extra_packages.debian: [graphicsmagick]` adds GraphicsMagick to a debian-recipe image). Extras install in their own image layer, so editing this list never invalidates the cached toolchain layers.",
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "debian": {
+                  "description": "apt package names installed when the debian setup recipe is selected, for example `graphicsmagick`.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[a-z0-9][a-z0-9+.-]*$"
+                  },
+                  "default": []
+                },
+                "alpine": {
+                  "description": "apk package names installed when the alpine setup recipe is selected.",
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[a-z0-9][a-z0-9._+-]*$"
+                  }
+                }
+              }
+            },
+            "agent_recipes": {
+              "description": "Which AI coding agents to install into the container, in install order. Each entry names a recipe from Overplane's embedded registry (see the Agent Environment reference) and an optional version. An empty list builds a toolchain-only container with no agents.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name"],
+                "properties": {
+                  "name": {
+                    "description": "Registry name of the agent recipe: `codex` (OpenAI Codex), `claude-code` (Anthropic Claude Code), or `gemini-cli` (Google Gemini CLI).",
+                    "type": "string",
+                    "enum": ["codex", "claude-code", "gemini-cli"]
+                  },
+                  "version": {
+                    "description": "Version of the agent CLI to install: an npm dist-tag (`latest`, `preview`) or an exact version (`2.1.3`). `latest` resolves at image build time; re-resolve it later with `overplane agent setup --force`.",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[a-z0-9][a-z0-9._-]*$",
+                    "default": "latest"
+                  }
+                }
+              },
+              "default": [
+                {"name": "codex", "version": "latest"},
+                {"name": "claude-code", "version": "latest"},
+                {"name": "gemini-cli", "version": "latest"}
+              ]
+            },
+            "env_passthrough": {
+              "description": "Additional host environment variables copied into the agent container at start, beyond the API keys each configured agent recipe always receives (for example OPENAI_API_KEY for codex - those are declared in the recipe registry and need not be repeated here). Be deliberate: live secrets listed here, like the recipe API keys, reach every container started by `overplane agent shell` and future agent runs.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "default": []
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -65,6 +65,47 @@ func valueAt(v any, ptr string) any {
 	return nil
 }
 
+// Defaults assembles a schema's default instance by walking down
+// "properties": an object subschema contributes the assembly of its own
+// properties (omitted when empty), and any other subschema contributes its
+// field-level "default" value when present. Root-level "default" blocks are
+// intentionally ignored; field-level defaults are the single source of truth.
+func Defaults(schemaJSON []byte) (map[string]any, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(schemaJSON, &doc); err != nil {
+		return nil, err
+	}
+	out := assembleDefaults(doc)
+	if out == nil {
+		out = map[string]any{}
+	}
+	return out, nil
+}
+
+func assembleDefaults(node map[string]any) map[string]any {
+	props, ok := node["properties"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := map[string]any{}
+	for name, raw := range props {
+		child, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, nested := child["properties"]; nested {
+			if v := assembleDefaults(child); len(v) > 0 {
+				out[name] = v
+			}
+			continue
+		}
+		if def, ok := child["default"]; ok {
+			out[name] = def
+		}
+	}
+	return out
+}
+
 func pointer(parts []string) string {
 	if len(parts) == 0 {
 		return "/"

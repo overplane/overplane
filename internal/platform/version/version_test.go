@@ -15,3 +15,16 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("bad runtime: %s", got)
 	}
 }
+
+func TestBuildDate(t *testing.T) {
+	orig := version.Date
+	defer func() { version.Date = orig }()
+	version.Date = "2026-06-10T22:01:34Z"
+	if got := version.BuildDate(); got != "2026-06-10" {
+		t.Fatalf("BuildDate = %q, want 2026-06-10", got)
+	}
+	version.Date = "unknown"
+	if got := version.BuildDate(); got != "unknown" {
+		t.Fatalf("BuildDate = %q, want unknown", got)
+	}
+}

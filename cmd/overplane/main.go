@@ -31,6 +31,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	logFormat := fs.String("log-format", openv.String("LOG_FORMAT", oplog.FormatPretty), "log format")
 	logLevel := fs.String("log-level", openv.String("LOG_LEVEL", "info"), "log level")
 	logFile := fs.String("log-file", openv.String("LOG_FILE", ""), "log file")
+	logTimestamps := fs.Bool("log-timestamps", openv.Bool("LOG_TIMESTAMPS", true), "include timestamps in logs")
 	verbose := fs.Bool("verbose", false, "verbose logs")
 	fs.BoolVar(verbose, "v", false, "verbose logs")
 	showVersion := fs.Bool("version", false, "show version")
@@ -55,7 +56,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		logCloser = f
 		defer logCloser.Close()
 	}
-	logger, err := oplog.Configure(*logFormat, *logLevel, logW, *verbose)
+	var logOpts []oplog.Option
+	if !*logTimestamps {
+		logOpts = append(logOpts, oplog.WithoutTimestamps())
+	}
+	logger, err := oplog.Configure(*logFormat, *logLevel, logW, *verbose, logOpts...)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2

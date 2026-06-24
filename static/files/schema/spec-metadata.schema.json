@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://overplane.dev/schema/spec-metadata.schema.json",
+  "title": "Overplane spec metadata",
+  "description": "YAML frontmatter metadata for an Overplane specification document. The base fields identify, classify, and summarize the spec; advisory extensions connect the document to the target repository area and spec format revision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "description", "status", "parent", "tags"],
+  "examples": [
+    {
+      "description": "Replace with a one-paragraph summary of this spec's purpose and deliverable.",
+      "id": "#0001",
+      "parent": [],
+      "status": "draft",
+      "tags": ["bootstrap"],
+      "title": "Bootstrap",
+      "author": "",
+      "created": "2026-06-10",
+      "spec_version": 1
+    }
+  ],
+  "properties": {
+    "description": {
+      "description": "Human-readable summary of the specification's purpose and deliverable.",
+      "type": "string",
+      "minLength": 1,
+      "default": "Replace with a one-paragraph summary of this spec's purpose and deliverable."
+    },
+    "id": {
+      "description": "Stable spec identifier. Use a hash-prefixed four-digit id for repository-local specs.",
+      "type": "string",
+      "pattern": "^#[0-9]{4}$",
+      "default": "#0001"
+    },
+    "parent": {
+      "description": "Parent spec ids that this spec extends or depends on.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^#[0-9]{4}$",
+        "default": "#0000"
+      },
+      "default": []
+    },
+    "status": {
+      "description": "Lifecycle state for the spec.",
+      "type": "string",
+      "enum": ["draft", "active", "deprecated", "superseded"],
+      "default": "draft"
+    },
+    "tags": {
+      "description": "Lowercase topic labels used for discovery and grouping.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]*$",
+        "default": "tag"
+      },
+      "default": ["bootstrap"]
+    },
+    "title": {
+      "description": "Short display title for the spec.",
+      "type": "string",
+      "minLength": 1,
+      "default": "Bootstrap"
+    },
+    "author": {
+      "description": "Advisory author or maintainer display name.",
+      "type": "string",
+      "default": ""
+    },
+    "created": {
+      "description": "Advisory creation date in ISO calendar form.",
+      "type": "string",
+      "format": "date",
+      "default": "2026-06-10"
+    },
+    "target_dir": {
+      "description": "Advisory repository-relative directory this spec targets.",
+      "type": "string",
+      "minLength": 1
+    },
+    "spec_version": {
+      "description": "Advisory integer version of the spec document format.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    }
+  }
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,6 +14,8 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/overplane/overplane/internal/platform/color"
 	"github.com/overplane/overplane/internal/platform/serde/canonjson"
+	"github.com/overplane/overplane/internal/project"
+	"github.com/overplane/overplane/internal/recipes"
 )
 
 type checkCommand struct{ r *Runner }
@@ -67,52 +70,83 @@ func (c checkCommand) Usage() string { return Binary + " check [--json]" }
 func (c checkCommand) Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && isHelpToken(args[0]) {
 		fmt.Fprint(c.r.Out, usage(color.HelpSpec{
-			Command:     "check",
-			Usage:       Binary + " check [--json]",
-			Description: "Run local environment checks without network calls.",
-			Flags:       []color.HelpFlag{{Name: "--json", Description: "emit canonical JSON"}},
+			Command: "check",
+			Usage:   Binary + " check [--json] [--quiet]",
+			Description: "Run local environment checks without network calls. " +
+				"Passes when at least one container engine works; API keys are optional.",
+			Flags: []color.HelpFlag{
+				{Name: "--json", Description: "emit canonical JSON"},
+				{Name: "--quiet", Description: "produce no output; result is the exit code only"},
+			},
 		}))
 		return nil
 	}
 	jsonOut, rest := wantsJSON(args)
+	quiet, rest := wantsFlag(rest, "--quiet")
 	if len(rest) > 0 {
 		return UsageError("unknown check flag %q", rest[0])
 	}
 	results := runChecks(ctx, defaultChecks())
-	failed := false
-	for _, r := range results {
-		if r.Status == "not installed" || r.Status == "daemon unavailable" || r.Status == "missing" || r.Status == "invalid" {
-			failed = true
-		}
-	}
-	if jsonOut {
+	switch {
+	case quiet:
+		// No output of any kind; callers read the exit code.
+	case jsonOut:
 		b, err := canonjson.MarshalIndent(results, "", "  ")
 		if err != nil {
 			return InternalError(err)
 		}
 		fmt.Fprintln(c.r.Out, string(b))
-	} else {
-		t := color.Table(c.r.Out)
-		t.SetColumnConfigs([]table.ColumnConfig{{Number: 4, WidthMax: checkHintWidth}})
-		t.AppendHeader(table.Row{"Name", "Status", "Detail", "Hint"})
-		for _, r := range results {
-			status := r.Status
-			switch r.Status {
-			case "ok":
-				status = color.Sprint(3, status)
-			case "warning":
-				status = color.Sprint(2, status)
-			default:
-				status = color.Sprint(0, status)
-			}
-			t.AppendRow(table.Row{r.Name, status, r.Detail, r.Hint})
-		}
-		t.Render()
+	default:
+		renderCheckResults(c.r.Out, results)
 	}
-	if failed {
-		return EnvError(errors.New("one or more checks failed"))
+	if failures := checkFailures(results); len(failures) > 0 {
+		return EnvError(errors.New("checks failed: " + strings.Join(failures, "; ")))
 	}
 	return nil
+}
+
+func renderCheckResults(w io.Writer, results []CheckResult) {
+	t := color.Table(w)
+	t.SetColumnConfigs([]table.ColumnConfig{{Number: 4, WidthMax: checkHintWidth}})
+	t.AppendHeader(table.Row{"Name", "Status", "Detail", "Hint"})
+	for _, r := range results {
+		status := r.Status
+		switch r.Status {
+		case "ok":
+			status = color.Sprint(3, status)
+		case "warning":
+			status = color.Sprint(2, status)
+		default:
+			status = color.Sprint(0, status)
+		}
+		t.AppendRow(table.Row{r.Name, status, r.Detail, r.Hint})
+	}
+	t.Render()
+}
+
+// checkFailures applies the aggregation rules of spec #0002 §6.2: at least
+// one container engine must be ok, and a set-but-malformed API key fails;
+// missing keys and git problems are warnings only.
+func checkFailures(results []CheckResult) []string {
+	var failures []string
+	if !anyEngineOK(results) {
+		failures = append(failures, "no working container engine (need docker or podman)")
+	}
+	for _, r := range results {
+		if strings.HasPrefix(r.Name, "api-key:") && r.Status == "invalid" {
+			failures = append(failures, r.Name+" is set but malformed")
+		}
+	}
+	return failures
+}
+
+func anyEngineOK(results []CheckResult) bool {
+	for _, r := range results {
+		if strings.HasPrefix(r.Name, "engine:") && r.Status == "ok" {
+			return true
+		}
+	}
+	return false
 }
 
 type checksConfig struct {
@@ -125,6 +159,58 @@ func defaultChecks() checksConfig {
 		ContainerEngines: []string{"docker", "podman"},
 		APIKeys:          []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"},
 	}
+}
+
+// checksConfigForProject derives the engine and API-key probes for setup from
+// a validated overplane.yaml and the embedded recipe registry.
+func checksConfigForProject(cfg *project.Config, reg *recipes.Registry) checksConfig {
+	if cfg == nil || cfg.Agent == nil {
+		return defaultChecks()
+	}
+	ac := cfg.Agent.Container
+	keys := reg.EnvPassthrough(ac)
+	if len(keys) == 0 {
+		keys = defaultChecks().APIKeys
+	}
+	return checksConfig{
+		ContainerEngines: []string{ac.Runtime},
+		APIKeys:          keys,
+	}
+}
+
+// runProjectChecks runs the setup-time system checks for cfg without printing
+// a table. The configured container runtime must be available; malformed API
+// keys still fail.
+func runProjectChecks(ctx context.Context, cfg *project.Config, reg *recipes.Registry) error {
+	checkCfg := checksConfigForProject(cfg, reg)
+	results := runChecks(ctx, checkCfg)
+	if failures := setupCheckFailures(results, checkCfg.ContainerEngines[0]); len(failures) > 0 {
+		return EnvError(errors.New("checks failed: " + strings.Join(failures, "; ")))
+	}
+	return nil
+}
+
+// setupCheckFailures requires the project's configured engine to be ok and
+// applies the same malformed API-key rule as checkFailures.
+func setupCheckFailures(results []CheckResult, runtime string) []string {
+	var failures []string
+	required := "engine:" + runtime
+	found := false
+	for _, r := range results {
+		if r.Name == required {
+			found = true
+			if r.Status != "ok" {
+				failures = append(failures, runtime+" engine not available ("+r.Status+": "+r.Detail+")")
+			}
+		}
+		if strings.HasPrefix(r.Name, "api-key:") && r.Status == "invalid" {
+			failures = append(failures, r.Name+" is set but malformed")
+		}
+	}
+	if !found {
+		failures = append(failures, "container engine check missing for "+runtime)
+	}
+	return failures
 }
 
 func runChecks(ctx context.Context, cfg checksConfig) []CheckResult {
@@ -163,7 +249,7 @@ func checkAPIKey(name string) CheckResult {
 	raw, ok := os.LookupEnv(name)
 	v := strings.TrimSpace(raw)
 	if !ok || v == "" {
-		return CheckResult{Name: "api-key:" + name, Status: "missing", Detail: "not set", Hint: "export " + name}
+		return CheckResult{Name: "api-key:" + name, Status: "warning", Detail: "not set", Hint: "export " + name}
 	}
 	if strings.ContainsAny(v, " \t\n\r'\"`") {
 		return CheckResult{

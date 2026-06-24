@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://overplane.dev/schema/recipes.schema.json",
+  "title": "Overplane recipe registry",
+  "description": "The single, typed source of truth for everything the Overplane agent-container subsystem supports: which container runtimes can build and run agent images, which build/run engine combinations are allowed, which built-in setup recipes can provision a base image, and which AI coding agents Overplane knows how to install. The registry ships embedded inside the overplane binary (static/files/recipes/recipes.yaml), is validated against this schema on every load, and renders verbatim on the public Agent Environment reference page \u2014 every description in the data file is user-facing documentation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "container_runtimes", "runtime_pairs", "setup_recipes", "agent_recipes"],
+  "properties": {
+    "schema_version": {
+      "description": "Version of the recipe registry format. Overplane refuses registries written for a newer or unknown format revision. The only accepted value is currently 1.",
+      "type": "integer",
+      "const": 1
+    },
+    "container_runtimes": {
+      "description": "Container engines Overplane knows about. Each entry declares which capabilities (building images, running containers) the engine provides and whether support is implemented today or planned. The `runtime` field of overplane.yaml must name an entry here whose status is `supported`.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description", "capabilities", "status"],
+        "properties": {
+          "name": {
+            "description": "Engine identifier, matching the engine's command-line binary name (for example `docker` or `podman`).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "description": {
+            "description": "User-facing prose describing the engine and any version requirements; rendered on the Agent Environment reference page.",
+            "type": "string",
+            "minLength": 1
+          },
+          "capabilities": {
+            "description": "What the engine can do for Overplane: `build` means it can build local images, `run` means it can run containers. Engines may provide one or both; asymmetric pairs are listed in runtime_pairs.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": ["build", "run"]
+            }
+          },
+          "status": {
+            "description": "Implementation status: `supported` engines work today; `planned` engines are modeled in the abstraction (enum, capability routing, build/run matrix) but their client is a stub that reports a friendly error.",
+            "type": "string",
+            "enum": ["supported", "planned"]
+          }
+        }
+      }
+    },
+    "runtime_pairs": {
+      "description": "The allowed build-engine/run-engine combinations. Symmetric pairs (build and run on the same engine) cover the common case; asymmetric pairs exist for environments where images are built by one tool and executed by another (for example built with nerdctl and run inside k3s). Each side must name a declared runtime that has the corresponding capability.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["build", "run"],
+        "properties": {
+          "build": {
+            "description": "Name of the runtime that builds the image; it must declare the `build` capability.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "run": {
+            "description": "Name of the runtime that runs the built image; it must declare the `run` capability.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        }
+      }
+    },
+    "setup_recipes": {
+      "description": "Built-in provisioning recipes. A setup recipe is an ordered list of embedded shell-script fragments that turn a stock base image (Debian, Alpine) into the Overplane agent environment: OS updates, a broad developer toolchain (Go, Rust, Node.js, Python with uv, z3, build tools, ripgrep, and friends), project-specific extra packages, and a non-root user matching the host identity. The `setup_recipe` field of overplane.yaml must name an entry here, and it must match the flavor of the configured base image.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "description", "package_family", "default_base_image", "fragments", "user_fragment"],
+        "properties": {
+          "name": {
+            "description": "Recipe identifier referenced by the `setup_recipe` field of overplane.yaml.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "description": {
+            "description": "User-facing prose describing what the recipe installs and any known gaps relative to other recipes; rendered on the Agent Environment reference page.",
+            "type": "string",
+            "minLength": 1
+          },
+          "package_family": {
+            "description": "Which key of overplane.yaml's `extra_packages` map applies to this recipe, and therefore which package-name conventions are validated (`debian` for apt package names, `alpine` for apk package names).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "default_base_image": {
+            "description": "The base image reference used when a project does not override `base_image` in overplane.yaml.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "fragments": {
+            "description": "Ordered list of embedded setup-script fragments, slowest-changing first so container layer caching stays effective. Each name resolves to an embedded files/setup/<name>.sh asset and becomes its own image layer.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            }
+          },
+          "user_fragment": {
+            "description": "Embedded fragment that creates the container user mirroring the host identity (uid, gid, username, home directory) with passwordless sudo and the Overplane shell profile. Runs as the final provisioning layer.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          }
+        }
+      }
+    },
+    "agent_recipes": {
+      "description": "AI coding agents Overplane can install into the agent container. Each recipe is an embedded install fragment grounded in the vendor's current official installation instructions, plus the metadata needed to run the agent: the command it installs and the host environment variables (API keys) that must be passed through to the container for the agent to authenticate.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "display_name",
+          "description",
+          "command",
+          "install_fragment",
+          "supported_setup_recipes",
+          "env_passthrough",
+          "docs_url"
+        ],
+        "properties": {
+          "name": {
+            "description": "Recipe identifier referenced by `agent_recipes[*].name` in overplane.yaml.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "display_name": {
+            "description": "Human-readable product name, used in documentation and command output.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "description": {
+            "description": "User-facing prose describing the agent and how it is installed; rendered on the Agent Environment reference page.",
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "description": "The executable the install fragment places on the container PATH (for example `claude` for Claude Code).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 50,
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "install_fragment": {
+            "description": "Embedded fragment (files/setup/<name>.sh) that installs the agent. It receives the configured version (an npm dist-tag or exact version) as its first argument, installs globally so the layer is user-independent, and ends with a --version smoke check that fails the image build on a broken install.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "supported_setup_recipes": {
+            "description": "Which setup recipes this agent can be installed on. Projects selecting an unsupported combination fail validation before any build starts.",
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$"
+            }
+          },
+          "env_passthrough": {
+            "description": "Host environment variables this agent needs inside the container, typically its API key. These keys are always passed through when the agent is configured in overplane.yaml; the project-level `agent.container.env_passthrough` list extends this set. Values are read from the host environment at container start and never stored in the image or in logs.",
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^[A-Z_][A-Z0-9_]*$"
+            }
+          },
+          "docs_url": {
+            "description": "Link to the vendor's installation and usage documentation.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300,
+            "pattern": "^https://"
+          }
+        }
+      }
+    }
+  }
+}

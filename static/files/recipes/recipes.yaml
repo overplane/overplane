@@ -1,0 +1,117 @@
+# Overplane recipe registry: the typed source of truth for the agent-container
+# subsystem. Validated against recipes.schema.json on every load; every
+# description below renders verbatim on the public Agent Environment reference.
+schema_version: 1
+container_runtimes:
+  - name: docker
+    description: >-
+      Docker Engine, driven through the `docker` CLI. Builds run through
+      Buildx/BuildKit (BuildKit 0.13 or newer is required for reproducible
+      `rewrite-timestamp` output) and containers run with `docker run`. This
+      is the default runtime.
+    capabilities: [build, run]
+    status: supported
+  - name: podman
+    description: >-
+      Podman, driven through the `podman` CLI. Daemonless and rootless-friendly;
+      builds use Buildah under the hood and must support the
+      `--source-date-epoch` and `--rewrite-timestamp` reproducibility flags
+      (Podman 5.x / Buildah 1.32 or newer).
+    capabilities: [build, run]
+    status: supported
+  - name: nerdctl
+    description: >-
+      containerd's nerdctl CLI as a build-only engine for environments that
+      build images with containerd and run them elsewhere. Planned: the engine
+      is modeled in the runtime matrix but not yet implemented.
+    capabilities: [build]
+    status: planned
+  - name: k3s
+    description: >-
+      Lightweight Kubernetes (k3s) as a run-only engine for executing agent
+      containers built by docker, podman, or nerdctl. Planned: the engine is
+      modeled in the runtime matrix but not yet implemented.
+    capabilities: [run]
+    status: planned
+runtime_pairs:
+  - {build: docker, run: docker}
+  - {build: podman, run: podman}
+  - {build: nerdctl, run: docker}
+  - {build: nerdctl, run: podman}
+  - {build: docker, run: k3s}
+  - {build: podman, run: k3s}
+setup_recipes:
+  - name: debian
+    description: >-
+      Provisions a Debian (bookworm or compatible) base image: UTC timezone,
+      full apt upgrade, then a broad developer toolchain installed from
+      official upstream sources where it matters - Go from go.dev tarballs,
+      Rust via rustup (stable, minimal profile), Node.js from NodeSource, uv
+      via pip - plus build-essential, pkg-config, libssl-dev, git, ripgrep,
+      rsync, jq, htop, tini, z3, python3, and sudo. Project-specific
+      `extra_packages.debian` entries install in their own layer so they never
+      invalidate the cached toolchain layer. This is the default recipe.
+    package_family: debian
+    default_base_image: debian:bookworm-slim
+    fragments:
+      - debian-base-setup
+      - debian-install-deps
+      - debian-extra-packages
+    user_fragment: linux-setup-user
+  - name: alpine
+    description: >-
+      Provisions an Alpine Linux base image with best-effort toolchain parity
+      to the debian recipe using apk: build-base, git, ripgrep, rsync, jq,
+      htop, tini, z3, python3 with uv, bash, and sudo. Known gaps versus
+      debian: Go, Node.js, and Rust install from the Alpine package
+      repositories (musl builds), so their versions track the Alpine release
+      rather than the upstream version arguments honored by the debian recipe.
+      All three agent CLIs ship musl-compatible builds and work unchanged.
+    package_family: alpine
+    default_base_image: alpine:3
+    fragments:
+      - alpine-base-setup
+      - alpine-install-deps
+      - alpine-extra-packages
+    user_fragment: linux-setup-user
+agent_recipes:
+  - name: codex
+    display_name: OpenAI Codex
+    description: >-
+      OpenAI's open-source coding agent for the terminal. Installed globally
+      from the official `@openai/codex` npm package, which distributes the
+      native Rust CLI. Requires an OpenAI API key (or `codex login` with a
+      ChatGPT plan) to authenticate.
+    command: codex
+    install_fragment: agent-codex
+    supported_setup_recipes: [debian, alpine]
+    env_passthrough: [OPENAI_API_KEY]
+    docs_url: https://developers.openai.com/codex/cli
+  - name: claude-code
+    display_name: Anthropic Claude Code
+    description: >-
+      Anthropic's agentic coding tool. Installed globally from the official
+      `@anthropic-ai/claude-code` npm package, which delivers the same native
+      binary as Anthropic's install script via per-platform optional
+      dependencies (including musl builds for Alpine); npm is used for
+      layer-friendly, system-wide, version-pinnable container installs.
+      Requires an Anthropic API key (or `claude login` with a Claude
+      subscription) to authenticate.
+    command: claude
+    install_fragment: agent-claude-code
+    supported_setup_recipes: [debian, alpine]
+    env_passthrough: [ANTHROPIC_API_KEY]
+    docs_url: https://code.claude.com/docs
+  - name: gemini-cli
+    display_name: Google Gemini CLI
+    description: >-
+      Google's open-source AI agent for the terminal. Installed globally from
+      the official `@google/gemini-cli` npm package (stable channel by
+      default; the `preview` and `nightly` dist-tags work through the same
+      version field). Requires a Gemini API key (or Google account login) to
+      authenticate.
+    command: gemini
+    install_fragment: agent-gemini-cli
+    supported_setup_recipes: [debian, alpine]
+    env_passthrough: [GEMINI_API_KEY]
+    docs_url: https://github.com/google-gemini/gemini-cli

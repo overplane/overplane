@@ -29,13 +29,31 @@ func TestDispatchHelpVersionConfigThemeDemo(t *testing.T) {
 		!strings.Contains(out.String(), "overplane v") {
 		t.Fatalf("version failed: %v %s", err, out.String())
 	}
-	out.Reset()
-	if err := Dispatch(context.Background(), r, []string{"theme", "preview"}); err != nil ||
-		!strings.Contains(out.String(), "Theme:") {
-		t.Fatalf("theme failed: %v %s", err, out.String())
+	for _, args := range [][]string{{"theme"}, {"theme", "preview"}} {
+		out.Reset()
+		if err := Dispatch(context.Background(), r, args); err != nil ||
+			!strings.Contains(out.String(), "Theme:") {
+			t.Fatalf("theme %v failed: %v %s", args, err, out.String())
+		}
 	}
 	if code := ExitCode(Dispatch(context.Background(), r, []string{"demo"})); code != 6 {
 		t.Fatalf("demo non-tty exit = %d", code)
+	}
+}
+
+func TestThemeSetRequiresMonorepo(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	dir := t.TempDir()
+	oldwd, _ := os.Getwd()
+	defer func() { _ = os.Chdir(oldwd) }()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	r := &Runner{Out: &out, Err: &errb}
+	err := Dispatch(context.Background(), r, []string{"theme", "set", "hand-drawn"})
+	if ExitCode(err) != 6 {
+		t.Fatalf("theme set outside monorepo exit = %d, want 6: %v stderr=%s", ExitCode(err), err, errb.String())
 	}
 }
 
@@ -181,10 +199,16 @@ else
   echo ok
 fi
 `)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PATH", isolatedToolPATH(bin))
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	t.Setenv("GEMINI_API_KEY", "gemini-test")
+}
+
+// isolatedToolPATH exposes only the shim directory plus the system paths
+// needed to execute #!/usr/bin/env bash scripts, without a real container CLI.
+func isolatedToolPATH(binDir string) string {
+	return binDir + string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin"
 }
 
 func writeTestFile(t *testing.T, path, data string) {

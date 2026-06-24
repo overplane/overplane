@@ -13,6 +13,40 @@ import (
 	oplog "github.com/overplane/overplane/internal/platform/log"
 )
 
+func TestWithoutTimestamps(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	var pretty bytes.Buffer
+	l, err := oplog.New(oplog.FormatPretty, "info", &pretty, false, oplog.WithoutTimestamps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Warn("created file", "path", "overplane.yaml", "hint", "edit me")
+	got := oplog.StripANSI(pretty.String())
+	if !strings.HasPrefix(got, "WARN ") {
+		t.Fatalf("pretty line should start at level token: %q", got)
+	}
+	if strings.Contains(got, "T") && strings.Contains(got, "Z ") {
+		t.Fatalf("pretty line should not contain a timestamp: %q", got)
+	}
+	if !strings.Contains(got, "↳ edit me") {
+		t.Fatalf("hint line missing: %q", got)
+	}
+
+	var js bytes.Buffer
+	jl, err := oplog.New(oplog.FormatJSON, "info", &js, false, oplog.WithoutTimestamps())
+	if err != nil {
+		t.Fatal(err)
+	}
+	jl.Info("json line", "path", "x")
+	var obj map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(js.Bytes()), &obj); err != nil {
+		t.Fatalf("invalid json %s: %v", js.String(), err)
+	}
+	if _, ok := obj["time"]; ok {
+		t.Fatalf("json object should have no time key: %s", js.String())
+	}
+}
+
 func TestPrettyAndJSON(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	var pretty bytes.Buffer
